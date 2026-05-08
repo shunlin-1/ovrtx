@@ -25,6 +25,16 @@ This directory contains example projects demonstrating various features of ovrtx
       <sub>Demonstrates ovrtx-Vulkan interoperability, rendering USD scenes and displaying them in a Vulkan window with interactive orbit camera control.</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="c/neon-robot-c/">
+        <b>Neon Robot (C)</b>
+      </a>
+      <br>
+      <sub>Fork of Vulkan Interop that injects an animated rig of UsdLux SphereLights into the robot scene via ovrtx_add_usd with inline USDA, then drives their poses each frame with ovrtx_set_xform_mat. Live mouse-orbit window with moving neon lights.</sub>
+    </td>
+    <td></td>
+  </tr>
 </table>
 
 ## Python Examples
@@ -49,5 +59,15 @@ This directory contains example projects demonstrating various features of ovrtx
       <br>
       <sub>Animated planetary system using Warp kernels for GPU-accelerated animation, demonstrating dynamic scene modification and zero-copy transform updates.</sub>
     </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="python/neon-robot/">
+        <b>Neon Robot</b>
+      </a>
+      <br>
+      <sub>Loads the robot-ovrtx scene and injects an animated rig of UsdLux SphereLights in saturated neon colors that orbit the robot, demonstrating per-frame light-pose updates via add_usd_layer + bind_attribute.</sub>
+    </td>
+    <td></td>
   </tr>
 </table>

@@ -1,0 +1,172 @@
+#usda 1.0
+#
+# Neon-rig animation as a pure-USDA layer over the robot-ovrtx scene.
+#
+# This file owns ALL the animation data:
+#   * a /World/NeonRig parent Xform that rotates a full 360° over 144 timecodes
+#     (6 seconds at 24 fps), with six static SphereLight children at chest
+#     height. The parent rotation orbits all six together for free.
+#   * time-sampled translation on /World/GR1T2_fourier_hand_6dof tracing a
+#     horizontal Lissajous figure-8 (one cycle per loop).
+#   * rendermode overrides forcing RTX Real-Time mode to eliminate path-
+#     tracer ghosting on the moving emitters.
+#
+# The neon-robot-c binary advances stage time each frame via
+# ovrtx_update_stage_from_usd_time, wrapping wall-clock seconds into the
+# [0, 144) timecode range for seamless looping.
+#
+# Robot scene metadata: metersPerUnit=1, upAxis=Z. All values below are in
+# meters with Z as the vertical axis.
+
+(
+    defaultPrim = "World"
+    timeCodesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 144
+
+    subLayers = [
+        @https://omniverse-content-production.s3.us-west-2.amazonaws.com/Samples/Robot-OVRTX/robot-ovrtx.usda@
+    ]
+)
+
+over "World"
+{
+    # =====================================================================
+    # Robot path: horizontal Lissajous figure-8.
+    #   x(t) = 0.8 * sin(omega * t)
+    #   y(t) = 0.4 * sin(2 * omega * t)
+    # Eight evenly-spaced keyframes around one parametric cycle (plus the
+    # closing keyframe at t=144 = t=0) approximate the curve with linear
+    # interpolation. Start == end so the seamless loop has no jump.
+    # =====================================================================
+    over "GR1T2_fourier_hand_6dof"
+    {
+        double3 xformOp:translate.timeSamples = {
+              0: ( 0.000,  0.000, 0),
+             18: ( 0.566,  0.400, 0),
+             36: ( 0.800,  0.000, 0),
+             54: ( 0.566, -0.400, 0),
+             72: ( 0.000,  0.000, 0),
+             90: (-0.566,  0.400, 0),
+            108: (-0.800,  0.000, 0),
+            126: (-0.566, -0.400, 0),
+            144: ( 0.000,  0.000, 0),
+        }
+    }
+
+    # =====================================================================
+    # Neon rig: parent Xform rotates the whole ring 360° per loop. Children
+    # are static SphereLights at fixed offsets — they orbit because the
+    # parent rotation propagates to them via USD's transform composition.
+    # =====================================================================
+    def Xform "NeonRig"
+    {
+        double xformOp:rotateZ.timeSamples = {
+            0:   0.0,
+            144: 360.0,
+        }
+        uniform token[] xformOpOrder = ["xformOp:rotateZ"]
+
+        # Six SphereLights spaced 60° apart on a 2.5 m ring at chest
+        # height (Z = 1.5 m). Saturated neon palette.
+
+        def SphereLight "Neon_0" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            float inputs:intensity = 50000
+            float inputs:radius = 0.12
+            color3f inputs:color = (1.00, 0.10, 0.55)
+            bool inputs:normalize = 1
+            double3 xformOp:translate = (2.500, 0.000, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def SphereLight "Neon_1" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            float inputs:intensity = 50000
+            float inputs:radius = 0.12
+            color3f inputs:color = (0.00, 1.00, 1.00)
+            bool inputs:normalize = 1
+            double3 xformOp:translate = (1.250, 2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def SphereLight "Neon_2" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            float inputs:intensity = 50000
+            float inputs:radius = 0.12
+            color3f inputs:color = (0.55, 0.00, 1.00)
+            bool inputs:normalize = 1
+            double3 xformOp:translate = (-1.250, 2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def SphereLight "Neon_3" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            float inputs:intensity = 50000
+            float inputs:radius = 0.12
+            color3f inputs:color = (0.10, 1.00, 0.30)
+            bool inputs:normalize = 1
+            double3 xformOp:translate = (-2.500, 0.000, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def SphereLight "Neon_4" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            float inputs:intensity = 50000
+            float inputs:radius = 0.12
+            color3f inputs:color = (1.00, 0.45, 0.00)
+            bool inputs:normalize = 1
+            double3 xformOp:translate = (-1.250, -2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def SphereLight "Neon_5" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            float inputs:intensity = 50000
+            float inputs:radius = 0.12
+            color3f inputs:color = (0.20, 0.40, 1.00)
+            bool inputs:normalize = 1
+            double3 xformOp:translate = (1.250, -2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+}
+
+# =========================================================================
+# Force RTX Real-Time mode ("RaytracedLighting") on every render-settings
+# surface in the robot scene. Custom-typed tokens bypass schema checks.
+# Belt-and-suspenders: whichever the renderer actually consults wins.
+# =========================================================================
+over "Render"
+{
+    over "Camera"
+    {
+        custom token omni:rtx:rendermode = "RaytracedLighting"
+    }
+    over "OmniverseGlobalRenderSettings"
+    {
+        custom token omni:rtx:rendermode = "RaytracedLighting"
+    }
+    over "OmniverseKit"
+    {
+        over "HydraTextures"
+        {
+            over "omni_kit_widget_viewport_ViewportTexture_0"
+            {
+                token omni:rtx:rendermode = "RaytracedLighting"
+            }
+        }
+    }
+}
