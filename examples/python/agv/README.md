@@ -58,10 +58,29 @@ Available `--rendermode` tokens (USD authored, ovrtx may fall back):
 | **Xray** | Translucent (`opacity_constant` 0.15), no emission — ghost / glass |
 | **Xray-Light** | Translucent (0.40) + soft cyan emission (1500) — hologram look |
 
-## Notes
+## Files
 
-* `Test.usda` is the sample AGV scene shipped with this example
-  (Y-up, `metersPerUnit = 0.01`). Bring your own with `--usd`.
-* `agv_render.usda` and `agv_render.picks.pkl` are *generated at
-  runtime*; they are gitignored. Both are recreated each launch
-  against the current USD.
+The shipped AGV scene is split across three on-disk pieces, all under
+`examples/python/agv/`:
+
+| File | Role |
+|---|---|
+| `Test.usda` (16 KB) | **Wrapper** — render settings, camera state, payload of AGV_Fix.usda, references to the two textures. Edit this to change lighting/camera presets. |
+| `AGV_Fix.usda` (79 MB) | **Geometry** — the actual AGV mesh data, inlined as ASCII USDA. Authored in Composer; do not hand-edit. |
+| `assets/CarLight_512x256.hdr` | Environment / dome light HDR (latlong, 180 KB). |
+| `assets/ov_uv_grids_basecolor_1024.png` | UV-grid checker texture for the floor / fallback material (44 KB). |
+
+All asset paths inside `Test.usda` are relative (`@./AGV_Fix.usda@`,
+`@./assets/<file>@`) so the scene loads on any clone.
+
+Bring your own scene with `--usd <path>`.
+
+## Generated at runtime (gitignored)
+
+* `agv_render.usda` — sidecar that adds `/World/Camera` and
+  `/Render/Camera` with the requested RTX render mode on top of
+  whatever `--usd` you point at. Rewritten on every launch.
+* `agv_render.picks.pkl` — per-mesh AABB + triangulated vertices +
+  bound shader path, built by `pick_collector.py` in its own venv
+  (ovrtx + usd-core can't coexist in the same process). Used by the
+  ray-triangle test in `pick(x, y)`.

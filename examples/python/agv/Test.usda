@@ -217,7 +217,7 @@ def Xform "Environment"
         float inputs:shaping:focus
         color3f inputs:shaping:focusTint
         asset inputs:shaping:ies:file
-        asset inputs:texture:file = @C:/projectrelated/omniverse/kit-app-template/_build/windows-x86_64/release/extscache/omni.kit.stage_templates-2.0.2+8e364693/data/CarLight_512x256.hdr@
+        asset inputs:texture:file = @./assets/CarLight_512x256.hdr@
         token inputs:texture:format = "latlong"
         custom int omni:rtx:usdluxVersion = 2505
         token visibility = "inherited"
@@ -266,7 +266,7 @@ def Xform "Environment"
                 float inputs:albedo_add = 0
                 float inputs:albedo_brightness = 0.52
                 float inputs:albedo_desaturation = 1
-                asset inputs:diffuse_texture = @C:/projectrelated/omniverse/kit-app-template/_build/windows-x86_64/release/extscache/omni.kit.stage_templates-2.0.2+8e364693/data/ov_uv_grids_basecolor_1024.png@ (
+                asset inputs:diffuse_texture = @./assets/ov_uv_grids_basecolor_1024.png@ (
                     colorSpace = "sRGB"
                     customData = {
                         asset default = @@
