@@ -1,0 +1,13 @@
+# Generated each launch by main.py / pick_collector.py — embeds the
+# absolute path to the source USD, so committing it would bake one
+# machine's layout into the repo.
+agv_render.usda
+agv_render.picks.pkl
+
+# uv-managed venv + lockfile churn
+.venv/
+__pycache__/
+*.pyc
+
+# Local logs
+*.log

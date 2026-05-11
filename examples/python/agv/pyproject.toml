@@ -1,0 +1,17 @@
+[project]
+name = "agv"
+version = "0.1.0"
+description = "AGV viewer: ovrtx-rendered AGV USD scene with PySide6 + QML overlay UI."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "numpy==2.2.6; python_version < '3.14'",
+    "numpy==2.4.2; python_version >= '3.14'",
+    "ovrtx==0.2.0.280040",
+    "PySide6>=6.6",
+    # NOTE: usd-core is intentionally NOT a dependency here. ovrtx
+    # bundles its own USD libs and refuses to load if usd-core is
+    # installed in the same env. The pick walk that needs pxr lives
+    # in pick_collector.py, which uv runs in its own ephemeral venv
+    # via PEP 723 inline metadata.
+]
