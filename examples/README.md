@@ -2,6 +2,10 @@
 
 This directory contains example projects demonstrating various features of ovrtx.
 
+> Fork-only: this fork (`shunlin-1/ovrtx`) adds personal R&D projects
+> for ovrtx-rendered Python viewers and CEF / Ultralight UI embedding.
+> See [`EXPERIMENTS.md`](EXPERIMENTS.md) for the index.
+
 ## C Examples
 
 <table>
