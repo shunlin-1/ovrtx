@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UI Effect Test — Neumorphism / Glassmorphism / Hover / Drag</title>
+<style>
+  /* Transparent body so the 3D scene behind shows through. */
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: transparent;
+    color: #f0f4ff;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ─── Glassmorphism: bottom-right panel ─────────────────────────── */
+  .glass-panel {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    width: 320px;
+    padding: 20px 22px;
+    background: rgba(20, 30, 50, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 18px;
+    /* The defining glassmorphism effect. */
+    backdrop-filter: blur(24px) saturate(1.6);
+    -webkit-backdrop-filter: blur(24px) saturate(1.6);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+  .glass-panel h3 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #cfe8ff;
+    text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .glass-panel h3::before {
+    content: ""; width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #4af0ff;
+    box-shadow: 0 0 12px #4af0ff;
+  }
+  .stat-row {
+    display: flex; justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .stat-row:last-of-type { border: 0; }
+  .stat-row .v { color: #4af0ff; font-variant-numeric: tabular-nums; }
+
+  /* Mini chart inside glass panel (canvas) */
+  canvas#mini-chart {
+    width: 100%; height: 80px;
+    margin-top: 10px;
+    display: block;
+  }
+
+  /* ─── Neumorphism: bottom-left buttons ──────────────────────────── */
+  /* Neumorphism needs a SOLID base color, can't be over arbitrary scene.
+     We give it a small dark tile background. Real BIM UI: render this
+     into a side panel that has its own bg, OR use glass + soft shadow
+     hybrid (which still works on transparent overlay). */
+  .neumorph-tile {
+    position: fixed;
+    left: 24px; bottom: 24px;
+    padding: 24px;
+    background: #1a1f2c;
+    border-radius: 22px;
+    box-shadow:
+      8px 8px 24px rgba(0, 0, 0, 0.55),
+      -2px -2px 12px rgba(255, 255, 255, 0.04);
+    display: flex; gap: 16px;
+  }
+  .neumorph-btn {
+    width: 64px; height: 64px;
+    border: none; cursor: pointer;
+    border-radius: 16px;
+    background: #1a1f2c;
+    color: #d0d8e8;
+    font-size: 22px;
+    box-shadow:
+      6px 6px 14px rgba(0, 0, 0, 0.55),
+      -3px -3px 10px rgba(255, 255, 255, 0.05);
+    transition: all 160ms ease-out;
+  }
+  .neumorph-btn:hover {
+    color: #4af0ff;
+    box-shadow:
+      4px 4px 10px rgba(0, 0, 0, 0.55),
+      -2px -2px 8px rgba(255, 255, 255, 0.06),
+      0 0 18px rgba(74, 240, 255, 0.18);
+  }
+  .neumorph-btn:active {
+    /* Pressed: invert shadow direction = looks pushed-in */
+    box-shadow:
+      inset 4px 4px 10px rgba(0, 0, 0, 0.6),
+      inset -3px -3px 8px rgba(255, 255, 255, 0.05);
+    color: #4af0ff;
+  }
+
+  /* ─── Hover-glow primary buttons (top-center) ───────────────────── */
+  .hover-row {
+    position: fixed;
+    top: 24px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 12px;
+  }
+  .hover-btn {
+    padding: 11px 22px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 11px;
+    background: rgba(74, 240, 255, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: #d8f6ff;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: all 200ms ease-out;
+  }
+  .hover-btn:hover {
+    background: rgba(74, 240, 255, 0.22);
+    border-color: rgba(74, 240, 255, 0.6);
+    color: #ffffff;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(74, 240, 255, 0.25);
+  }
+  .hover-btn.primary {
+    background: linear-gradient(135deg, #4af0ff 0%, #c474ff 100%);
+    color: #0c1020;
+    border-color: transparent;
+    font-weight: 600;
+  }
+  .hover-btn.primary:hover {
+    box-shadow: 0 8px 28px rgba(74, 240, 255, 0.5);
+  }
+
+  /* ─── Draggable card (top-left) ─────────────────────────────────── */
+  .drag-card {
+    position: fixed;
+    top: 80px;
+    left: 24px;
+    width: 230px;
+    padding: 18px;
+    background: rgba(40, 50, 80, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 16px;
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    cursor: grab;
+    transition: box-shadow 160ms;
+  }
+  .drag-card.dragging {
+    cursor: grabbing;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  }
+  .drag-card .handle {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+    font-size: 11px; opacity: 0.7;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .drag-card .handle::before {
+    content: "⋮⋮"; letter-spacing: -2px; font-size: 14px;
+  }
+  .drag-card h4 {
+    margin: 0 0 4px; font-size: 15px; font-weight: 600;
+  }
+  .drag-card p {
+    margin: 0; font-size: 12px; opacity: 0.7; line-height: 1.5;
+  }
+
+  /* ─── Animated background spinner (proves transitions/animation
+     work) ─────────────────────────────────────────────────────────── */
+  .spinner {
+    position: fixed;
+    right: 24px; top: 24px;
+    width: 36px; height: 36px;
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-top-color: #4af0ff;
+    border-radius: 50%;
+    animation: spin 1.2s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+</head>
+<body>
+
+  <!-- Top-center: hover-effect button row -->
+  <div class="hover-row">
+    <button class="hover-btn">Reset View</button>
+    <button class="hover-btn">Layers</button>
+    <button class="hover-btn primary">Run Analysis</button>
+  </div>
+
+  <!-- Top-right: animated CSS spinner -->
+  <div class="spinner" title="Live"></div>
+
+  <!-- Top-left: draggable card -->
+  <div class="drag-card" id="dragCard">
+    <div class="handle">Drag handle</div>
+    <h4>Selection</h4>
+    <p>Beam B-204<br>Material: Steel S355<br>Length: 6.40 m</p>
+  </div>
+
+  <!-- Bottom-left: neumorphic buttons -->
+  <div class="neumorph-tile">
+    <button class="neumorph-btn" title="Pan">✥</button>
+    <button class="neumorph-btn" title="Rotate">⟳</button>
+    <button class="neumorph-btn" title="Section">▣</button>
+  </div>
+
+  <!-- Bottom-right: glassmorphism stats panel + canvas mini chart -->
+  <div class="glass-panel">
+    <h3>Live Stats</h3>
+    <div class="stat-row"><span>FPS</span><span class="v" id="fps">—</span></div>
+    <div class="stat-row"><span>Triangles</span><span class="v">2.4 M</span></div>
+    <div class="stat-row"><span>Memory</span><span class="v">312 MB</span></div>
+    <canvas id="mini-chart" width="320" height="80"></canvas>
+  </div>
+
+<script>
+  // ─── Drag logic ────────────────────────────────────────────────────
+  (function() {
+    const card = document.getElementById("dragCard");
+    let dragging = false;
+    let startX = 0, startY = 0, originLeft = 0, originTop = 0;
+    card.addEventListener("mousedown", e => {
+      dragging = true;
+      card.classList.add("dragging");
+      const r = card.getBoundingClientRect();
+      startX = e.clientX; startY = e.clientY;
+      originLeft = r.left; originTop = r.top;
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", e => {
+      if (!dragging) return;
+      card.style.left = (originLeft + (e.clientX - startX)) + "px";
+      card.style.top  = (originTop  + (e.clientY - startY)) + "px";
+    });
+    window.addEventListener("mouseup", () => {
+      dragging = false;
+      card.classList.remove("dragging");
+    });
+  })();
+
+  // ─── Mini chart (pure Canvas, no ECharts dependency) ──────────────
+  // Animates a sliding waveform — exercises Canvas 2D path/fill/stroke
+  // performance, the same primitive ECharts uses underneath.
+  (function() {
+    const c = document.getElementById("mini-chart");
+    const ctx = c.getContext("2d");
+    const N = 60;
+    const data = new Array(N).fill(0);
+    let t = 0;
+
+    function draw() {
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      // gradient fill
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, "rgba(74, 240, 255, 0.55)");
+      g.addColorStop(1, "rgba(74, 240, 255, 0.0)");
+      ctx.fillStyle = g;
+      ctx.strokeStyle = "#4af0ff";
+      ctx.lineWidth = 1.5;
+
+      ctx.beginPath();
+      for (let i = 0; i < N; i++) {
+        const x = (i / (N - 1)) * w;
+        const y = h - data[i] * h * 0.85 - 4;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.lineTo(w, h); ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fill();
+      // stroke top line again (closed-path fill swallowed it)
+      ctx.beginPath();
+      for (let i = 0; i < N; i++) {
+        const x = (i / (N - 1)) * w;
+        const y = h - data[i] * h * 0.85 - 4;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    let last = performance.now(), frames = 0, fpsTimer = 0;
+    function tick(now) {
+      frames++;
+      fpsTimer += now - last;
+      if (fpsTimer >= 1000) {
+        document.getElementById("fps").textContent = frames.toFixed(0);
+        frames = 0; fpsTimer = 0;
+      }
+      last = now;
+
+      t += 0.06;
+      data.shift();
+      data.push(0.5 + 0.4 * Math.sin(t) + 0.1 * Math.sin(t * 3.2));
+      draw();
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  })();
+</script>
+</body>
+</html>

@@ -1,5 +1,9 @@
 _build
 _deps
 */build
+*/build-*
+*/cef-cache
 */.cache
+*.log
+*/*.log
 out.png

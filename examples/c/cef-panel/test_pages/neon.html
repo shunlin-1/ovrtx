@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>neon overlay</title>
+<style>
+  /* CRITICAL: html + body must be transparent so the ovrtx render shows
+     through everywhere CSS doesn't paint. */
+  html, body {
+    margin: 0; padding: 0;
+    background: #050810;
+    color: #e8f7ff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    height: 100%;
+    user-select: none;
+  }
+
+  :root {
+    --neon-cyan:   #5eead4;
+    --neon-pink:   #ff7ad9;
+    --neon-blue:   #5b8cff;
+    --bg-dim:      rgba(8, 12, 24, 0.55);
+    --bg-stronger: rgba(8, 12, 24, 0.78);
+  }
+
+  /* Top-left HUD: shows we're really an HTML overlay, not painted by ovrtx */
+  .hud {
+    position: fixed; top: 24px; left: 24px;
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    background: var(--bg-dim);
+    border: 1px solid rgba(94, 234, 212, 0.25);
+    border-radius: 12px;
+    padding: 14px 18px;
+    box-shadow: 0 0 24px rgba(94, 234, 212, 0.15);
+  }
+  .hud h1 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 12px var(--neon-cyan);
+  }
+  .hud p { margin: 0; font-size: 12px; opacity: 0.82; }
+
+  /* Right panel: button rail */
+  .panel {
+    position: fixed; top: 50%; right: 24px;
+    transform: translateY(-50%);
+    width: 240px;
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    background: var(--bg-stronger);
+    border: 1px solid rgba(91, 140, 255, 0.3);
+    border-radius: 16px;
+    padding: 18px;
+    display: flex; flex-direction: column; gap: 12px;
+    box-shadow: 0 0 32px rgba(91, 140, 255, 0.2);
+  }
+  .panel-title {
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--neon-blue);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+
+  .btn {
+    border: 1px solid rgba(94, 234, 212, 0.35);
+    background: rgba(94, 234, 212, 0.06);
+    color: var(--neon-cyan);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: all 160ms ease;
+    backdrop-filter: blur(4px);
+  }
+  .btn:hover {
+    background: rgba(94, 234, 212, 0.18);
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 18px rgba(94, 234, 212, 0.5),
+                inset 0 0 12px rgba(94, 234, 212, 0.15);
+    transform: translateX(-2px);
+  }
+  .btn:active {
+    transform: translateX(0) scale(0.98);
+    box-shadow: 0 0 30px var(--neon-cyan);
+  }
+  .btn.pink { color: var(--neon-pink); border-color: rgba(255,122,217,0.35); }
+  .btn.pink:hover { box-shadow: 0 0 18px rgba(255,122,217,0.5); border-color: var(--neon-pink); }
+
+  /* Bottom-left HUD: live counters */
+  .counters {
+    position: fixed; bottom: 24px; left: 24px;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    background: var(--bg-dim);
+    border: 1px solid rgba(255, 122, 217, 0.25);
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 12px;
+    line-height: 1.6;
+    box-shadow: 0 0 18px rgba(255, 122, 217, 0.15);
+  }
+  .counters .row { display: flex; gap: 12px; }
+  .counters .label { opacity: 0.7; min-width: 110px; }
+  .counters .value { color: var(--neon-pink); font-variant-numeric: tabular-nums; }
+
+  /* Decorative scanlines for that retro CRT feel */
+  .scanlines {
+    pointer-events: none;
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.0) 0px,
+      rgba(255,255,255,0.0) 2px,
+      rgba(255,255,255,0.025) 3px,
+      rgba(255,255,255,0.0) 4px
+    );
+  }
+
+  /* Big circular reticle in center, breathing animation */
+  .reticle {
+    pointer-events: none;
+    position: fixed; top: 50%; left: 50%;
+    width: 160px; height: 160px;
+    margin: -80px 0 0 -80px;
+    border: 2px solid rgba(94, 234, 212, 0.4);
+    border-radius: 50%;
+    box-shadow:
+      0 0 32px rgba(94, 234, 212, 0.4),
+      inset 0 0 32px rgba(94, 234, 212, 0.25);
+    animation: breathe 3s ease-in-out infinite;
+  }
+  .reticle::before, .reticle::after {
+    content: ''; position: absolute;
+    background: rgba(94, 234, 212, 0.6);
+  }
+  .reticle::before { top: 50%; left: -8px; right: -8px; height: 1px; }
+  .reticle::after  { left: 50%; top: -8px; bottom: -8px; width: 1px; }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1.0); opacity: 0.85; }
+    50%      { transform: scale(1.08); opacity: 1.0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scanlines"></div>
+<div class="reticle"></div>
+
+<div class="hud">
+  <h1>NEON OVERLAY</h1>
+  <p>HTML + CSS + Vue-class component running inside CEF OSR</p>
+  <p>Composited onto ovrtx render via Vulkan shader</p>
+</div>
+
+<div class="panel">
+  <div class="panel-title">Tools</div>
+  <button class="btn"      onclick="onClick('select')">Select</button>
+  <button class="btn"      onclick="onClick('measure')">Measure Distance</button>
+  <button class="btn"      onclick="onClick('section')">Section Plane</button>
+  <button class="btn"      onclick="onClick('annotate')">Add Annotation</button>
+  <button class="btn pink" onclick="onClick('isolate')">Isolate Floor</button>
+  <button class="btn pink" onclick="onClick('explode')">Explode View</button>
+</div>
+
+<div class="counters">
+  <div class="row"><div class="label">Frame</div><div class="value" id="c-frame">0</div></div>
+  <div class="row"><div class="label">CEF fps</div><div class="value" id="c-fps">—</div></div>
+  <div class="row"><div class="label">Last action</div><div class="value" id="c-action">—</div></div>
+  <div class="row"><div class="label">Pointer</div><div class="value" id="c-pointer">—</div></div>
+</div>
+
+<script>
+  const elFrame   = document.getElementById('c-frame');
+  const elFps     = document.getElementById('c-fps');
+  const elAction  = document.getElementById('c-action');
+  const elPointer = document.getElementById('c-pointer');
+  let frame = 0;
+  let lastFpsAt = performance.now();
+  let lastFpsFrame = 0;
+
+  function tick(now) {
+    frame++;
+    elFrame.textContent = frame;
+    if (now - lastFpsAt >= 500) {  // refresh fps readout twice per second
+      const fps = (frame - lastFpsFrame) * 1000 / (now - lastFpsAt);
+      elFps.textContent = fps.toFixed(1);
+      lastFpsAt = now;
+      lastFpsFrame = frame;
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  function onClick(name) {
+    elAction.textContent = name + ' @ ' + frame;
+    console.log('clicked:', name);
+  }
+
+  document.addEventListener('mousemove', (e) => {
+    elPointer.textContent = e.clientX + ', ' + e.clientY;
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Neon BIM Viewer</title>
+<style>
+  :root {
+    --accent:        #4af0ff;
+    --accent-soft:   rgba(74, 240, 255, 0.18);
+    --panel-bg:      rgba(15, 22, 38, 0.42);
+    --panel-bg-hi:   rgba(20, 28, 48, 0.62);
+    --panel-edge:    rgba(255, 255, 255, 0.16);
+    --panel-edge-hi: rgba(255, 255, 255, 0.28);
+    --text:          #e6ecff;
+    --text-dim:      rgba(230, 236, 255, 0.55);
+    --text-mute:     rgba(230, 236, 255, 0.32);
+    --neu-bg:        #161b27;
+    --neu-shadow-lo: rgba(0, 0, 0, 0.65);
+    --neu-shadow-hi: rgba(255, 255, 255, 0.04);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background: transparent;
+    color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    height: 100%;
+    overflow: hidden;
+    user-select: none;
+    cursor: default;
+  }
+
+  /* ════ Glass panel base ════════════════════════════════════════════ */
+  .glass {
+    position: absolute;
+    background: var(--panel-bg);
+    /* backdrop-filter removed: in this embed the blur is done in the
+       Vulkan composite shader (which can blur the ovrtx scene behind us);
+       CSS backdrop-filter on a transparent body has no content to blur
+       and is purely a CPU rasterizer cost (~5-10ms per panel repaint). */
+    border: 1px solid var(--panel-edge);
+    border-radius: 16px;
+    box-shadow:
+      0 18px 44px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .glass:hover { border-color: var(--panel-edge-hi); }
+
+  /* ════ Header bar (drag handle for the panel) ═════════════════════ */
+  .glass > header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px;
+    background: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0)
+    );
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    cursor: grab;
+    flex-shrink: 0;
+  }
+  .glass > header:active { cursor: grabbing; }
+  .glass > header h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .glass > header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent-soft), 0 0 4px var(--accent);
+  }
+  .glass > header .spacer { flex: 1; }
+  .glass > header .badge {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+
+  /* ════ Scrollable body ════════════════════════════════════════════ */
+  .glass > .body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px 14px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+  .glass > .body::-webkit-scrollbar { width: 8px; }
+  .glass > .body::-webkit-scrollbar-track { background: transparent; }
+  .glass > .body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+  }
+  .glass > .body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+
+  /* ════ Tree / list rows ═══════════════════════════════════════════ */
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+  .row:hover { background: rgba(255, 255, 255, 0.06); }
+  .row.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .row .icon {
+    width: 16px; height: 16px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  .row.active .icon {
+    background: var(--accent);
+    color: #0a0e18;
+  }
+  .row .label { flex: 1; font-size: 13px; }
+  .row .meta { font-size: 11px; color: var(--text-mute); }
+  .row.indent { padding-left: 26px; }
+  .row.indent2 { padding-left: 42px; }
+
+  .group-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    padding: 14px 10px 6px;
+  }
+
+  /* ════ Property pairs ═════════════════════════════════════════════ */
+  .prop {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .prop:hover { background: rgba(255, 255, 255, 0.04); }
+  .prop .k { color: var(--text-dim); }
+  .prop .v {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  .prop .v.accent { color: var(--accent); }
+
+  .swatch {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  /* ════ Bar chart bars ═════════════════════════════════════════════ */
+  .bar-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+  .bar-row .k { width: 64px; color: var(--text-dim); }
+  .bar-row .bar-track {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .bar-row .bar-fill {
+    height: 100%;
+    background: linear-gradient(to right, #4af0ff, #b25fff);
+    border-radius: inherit;
+    box-shadow: 0 0 8px rgba(74, 240, 255, 0.45);
+  }
+  .bar-row .v {
+    width: 44px;
+    text-align: right;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ════ Top status strip (no glass — pure floating) ════════════════ */
+  .topbar {
+    position: absolute;
+    top: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 18px;
+    padding: 9px 22px;
+    background: var(--panel-bg-hi);
+    /* see note above — blur is handled in Vulkan composite shader. */
+    border: 1px solid var(--panel-edge);
+    border-radius: 999px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+    font-size: 12px;
+  }
+  .topbar .crumb {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text-dim);
+  }
+  .topbar .crumb b { color: var(--text); font-weight: 600; }
+  .topbar .sep {
+    width: 1px; height: 14px;
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .topbar .pill {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+
+  /* ════ Neumorphism toolbar (bottom-left) ══════════════════════════ */
+  .neu-bar {
+    position: absolute;
+    left: 24px;
+    bottom: 24px;
+    display: flex;
+    gap: 10px;
+    padding: 10px;
+    background: var(--neu-bg);
+    border-radius: 18px;
+    box-shadow:
+       9px  9px 22px var(--neu-shadow-lo),
+      -3px -3px 10px var(--neu-shadow-hi);
+  }
+  .neu-bar button {
+    width: 42px; height: 42px;
+    background: var(--neu-bg);
+    border: none;
+    border-radius: 12px;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow:
+       4px  4px 10px var(--neu-shadow-lo),
+      -2px -2px  6px var(--neu-shadow-hi);
+    transition: color 120ms ease, transform 80ms ease;
+  }
+  .neu-bar button:hover { color: var(--text); }
+  .neu-bar button.active {
+    color: var(--accent);
+    box-shadow:
+      inset  3px  3px 8px var(--neu-shadow-lo),
+      inset -2px -2px 6px var(--neu-shadow-hi);
+  }
+  .neu-bar button:active {
+    transform: translateY(1px);
+    box-shadow:
+      inset  3px  3px 8px var(--neu-shadow-lo),
+      inset -2px -2px 6px var(--neu-shadow-hi);
+  }
+
+  /* ════ FPS / status pill (bottom-right neumorph) ══════════════════ */
+  .fps-pill {
+    position: absolute;
+    right: 24px;
+    bottom: 24px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 18px;
+    background: var(--neu-bg);
+    border-radius: 14px;
+    box-shadow:
+       8px  8px 20px var(--neu-shadow-lo),
+      -2px -2px  8px var(--neu-shadow-hi);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .fps-pill b { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .fps-pill .label { letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; }
+</style>
+</head>
+<body>
+
+  <!-- ════ Top floating breadcrumb ════════════════════════════════ -->
+  <div class="topbar">
+    <span class="crumb">Project ▸ <b>Neon Tower</b></span>
+    <div class="sep"></div>
+    <span class="crumb">Level <b>L-04 Mech</b></span>
+    <div class="sep"></div>
+    <span class="pill">RTX • PathTracing</span>
+  </div>
+
+  <!-- ════ Left: model tree (glass, scroll, drag) ═════════════════ -->
+  <div class="glass" id="panel-tree"
+       style="left: 24px; top: 96px; width: 300px; height: 460px;">
+    <header data-drag>
+      <span class="dot"></span>
+      <h2>Model Tree</h2>
+      <span class="spacer"></span>
+      <span class="badge">142</span>
+    </header>
+    <div class="body">
+      <div class="group-title">Architecture</div>
+      <div class="row active">
+        <span class="icon">▣</span>
+        <span class="label">Tower Shell</span>
+        <span class="meta">38</span>
+      </div>
+      <div class="row indent">
+        <span class="icon">◢</span><span class="label">Curtain Wall</span><span class="meta">24</span>
+      </div>
+      <div class="row indent">
+        <span class="icon">◢</span><span class="label">Slab Edges</span><span class="meta">14</span>
+      </div>
+      <div class="row indent2">
+        <span class="icon">·</span><span class="label">Edge L-04</span><span class="meta">1</span>
+      </div>
+      <div class="row indent2">
+        <span class="icon">·</span><span class="label">Edge L-05</span><span class="meta">1</span>
+      </div>
+
+      <div class="group-title">Structure</div>
+      <div class="row">
+        <span class="icon">▦</span><span class="label">Columns</span><span class="meta">62</span>
+      </div>
+      <div class="row indent">
+        <span class="icon">·</span><span class="label">CFT 600 W</span><span class="meta">28</span>
+      </div>
+      <div class="row indent">
+        <span class="icon">·</span><span class="label">CFT 800 W</span><span class="meta">34</span>
+      </div>
+      <div class="row">
+        <span class="icon">▥</span><span class="label">Beams</span><span class="meta">96</span>
+      </div>
+      <div class="row indent">
+        <span class="icon">·</span><span class="label">Primary</span><span class="meta">38</span>
+      </div>
+      <div class="row indent">
+        <span class="icon">·</span><span class="label">Secondary</span><span class="meta">58</span>
+      </div>
+
+      <div class="group-title">MEP</div>
+      <div class="row">
+        <span class="icon">▤</span><span class="label">HVAC Ducts</span><span class="meta">204 m</span>
+      </div>
+      <div class="row">
+        <span class="icon">▤</span><span class="label">Plumbing</span><span class="meta">142 m</span>
+      </div>
+      <div class="row">
+        <span class="icon">▤</span><span class="label">Electrical</span><span class="meta">86 c</span>
+      </div>
+
+      <div class="group-title">Site</div>
+      <div class="row"><span class="icon">⌬</span><span class="label">Topo Surface</span><span class="meta">1</span></div>
+      <div class="row"><span class="icon">⌬</span><span class="label">Trees (Proxy)</span><span class="meta">214</span></div>
+      <div class="row"><span class="icon">⌬</span><span class="label">Streets</span><span class="meta">8</span></div>
+    </div>
+  </div>
+
+  <!-- ════ Right: inspector + chart (glass, scroll, drag) ═════════ -->
+  <div class="glass" id="panel-inspector"
+       style="right: 24px; top: 96px; width: 320px; height: 540px;">
+    <header data-drag>
+      <span class="dot"></span>
+      <h2>Inspector</h2>
+      <span class="spacer"></span>
+      <span class="badge">Tower Shell</span>
+    </header>
+    <div class="body">
+      <div class="group-title">Identity</div>
+      <div class="prop"><span class="k">USD Path</span><span class="v">/World/Tower/Shell</span></div>
+      <div class="prop"><span class="k">Type</span><span class="v">Xform</span></div>
+      <div class="prop"><span class="k">Visible</span><span class="v accent">true</span></div>
+      <div class="prop"><span class="k">Instances</span><span class="v">38</span></div>
+
+      <div class="group-title">Transform</div>
+      <div class="prop"><span class="k">translate</span><span class="v">0, 0, 14.40</span></div>
+      <div class="prop"><span class="k">rotate</span><span class="v">0°, 0°, 22.5°</span></div>
+      <div class="prop"><span class="k">scale</span><span class="v">1.000</span></div>
+
+      <div class="group-title">Material</div>
+      <div class="prop"><span class="k">Shader</span><span class="v">UsdPreviewSurface</span></div>
+      <div class="prop">
+        <span class="k">diffuseColor</span>
+        <span class="v"><span class="swatch" style="background:#4af0ff"></span>#4af0ff</span>
+      </div>
+      <div class="prop"><span class="k">metallic</span><span class="v">0.85</span></div>
+      <div class="prop"><span class="k">roughness</span><span class="v">0.18</span></div>
+      <div class="prop"><span class="k">emissive</span><span class="v accent">2.4 nits</span></div>
+
+      <div class="group-title">Quantities</div>
+      <div class="bar-row"><span class="k">Volume</span><div class="bar-track"><div class="bar-fill" style="width:72%"></div></div><span class="v">412 m³</span></div>
+      <div class="bar-row"><span class="k">Surface</span><div class="bar-track"><div class="bar-fill" style="width:54%"></div></div><span class="v">1.8k m²</span></div>
+      <div class="bar-row"><span class="k">Mass</span><div class="bar-track"><div class="bar-fill" style="width:33%"></div></div><span class="v">86 t</span></div>
+      <div class="bar-row"><span class="k">CO₂e</span><div class="bar-track"><div class="bar-fill" style="width:46%"></div></div><span class="v">142 kg</span></div>
+
+      <div class="group-title">Clash Detection</div>
+      <div class="prop"><span class="k">Soft</span><span class="v">3</span></div>
+      <div class="prop"><span class="k">Hard</span><span class="v" style="color:#ff7a8a">1</span></div>
+      <div class="prop"><span class="k">Tolerance</span><span class="v">2.0 mm</span></div>
+    </div>
+  </div>
+
+  <!-- ════ Floating mini-chart (glass, drag) ══════════════════════ -->
+  <div class="glass" id="panel-chart"
+       style="right: 24px; bottom: 96px; width: 300px; height: 220px;">
+    <header data-drag>
+      <span class="dot"></span>
+      <h2>Energy Flux · 24h</h2>
+      <span class="spacer"></span>
+      <span class="badge">live</span>
+    </header>
+    <div class="body" style="display:flex;align-items:flex-end;gap:4px;padding:18px 16px 16px;">
+      <!-- Inline 24-bar histogram. -->
+      <!-- heights are sin-wave shaped, deterministic, no JS. -->
+      <div style="flex:1;height:18%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:24%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:34%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:48%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:62%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:74%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:84%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:90%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:88%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:78%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:64%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:48%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:36%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:28%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:22%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:18%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:24%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:32%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:42%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:54%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:64%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:58%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:46%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+      <div style="flex:1;height:32%;background:linear-gradient(to top,#4af0ff,#b25fff);border-radius:3px;"></div>
+    </div>
+  </div>
+
+  <!-- ════ Bottom-left neumorph toolbar ════════════════════════════ -->
+  <div class="neu-bar">
+    <button class="active" title="Select">▣</button>
+    <button title="Pan">✥</button>
+    <button title="Orbit">◐</button>
+    <button title="Section">▤</button>
+    <button title="Measure">⊿</button>
+    <button title="Layers">▥</button>
+  </div>
+
+  <!-- ════ Bottom-right neumorph FPS ═══════════════════════════════ -->
+  <div class="fps-pill">
+    <span class="label">FPS</span><b id="fps">—</b>
+    <span class="label" style="margin-left:6px;">PRIMS</span><b>142</b>
+  </div>
+
+<script>
+  // ════ Drag implementation ═══════════════════════════════════════════
+  // Any element with data-drag inside a positioned ancestor moves the
+  // ancestor on mousedown→mousemove→mouseup. Reads the current
+  // computed left/top so it survives both `left` and `right` anchoring.
+  document.querySelectorAll('[data-drag]').forEach((handle) => {
+    const panel = handle.closest('.glass') || handle.parentElement;
+    handle.addEventListener('mousedown', (e) => {
+      const rect = panel.getBoundingClientRect();
+      // Convert any right/bottom anchoring to left/top so dragging works.
+      panel.style.left = rect.left + 'px';
+      panel.style.top  = rect.top  + 'px';
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      const sx = e.clientX, sy = e.clientY;
+      const ox = rect.left, oy = rect.top;
+      // Bring to front.
+      const z = (parseInt(panel.style.zIndex) || 1) + 1;
+      panel.style.zIndex = z;
+      const onMove = (ev) => {
+        panel.style.left = (ox + ev.clientX - sx) + 'px';
+        panel.style.top  = (oy + ev.clientY - sy) + 'px';
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      e.preventDefault();
+    });
+  });
+
+  // ════ Toolbar select state ═══════════════════════════════════════════
+  document.querySelectorAll('.neu-bar button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.neu-bar button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+
+  // ════ Live FPS counter ═══════════════════════════════════════════════
+  // requestAnimationFrame in Ultralight is internally throttled to its
+  // animation timer (~30 Hz) regardless of how often the host calls
+  // Renderer::Update(), so an RAF-based counter under-reports the true
+  // composite rate. Use a tight setInterval(0) loop instead — JS
+  // executes whenever the next Update tick lets it, which tracks the
+  // host's UI loop rate much better.
+  let frames = 0, lastSec = performance.now();
+  setInterval(() => {
+    frames++;
+    const now = performance.now();
+    if (now - lastSec >= 1000) {
+      document.getElementById('fps').textContent =
+        Math.round(frames * 1000 / (now - lastSec));
+      frames = 0; lastSec = now;
+    }
+  }, 0);
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>cef-thread-spike stress page</title>
+    <style>
+        html, body { margin: 0; padding: 0; background: #1a1a2e; color: #eaeaea;
+                     font-family: monospace; }
+        #stage { display: flex; flex-direction: row; }
+        #canvas { width: 1280px; height: 720px; background: #000; }
+        #stats { padding: 16px; min-width: 320px; }
+        .row { display: flex; justify-content: space-between; padding: 4px 0; }
+        .row span:last-child { color: #5eead4; }
+    </style>
+</head>
+<body>
+    <div id="stage">
+        <canvas id="canvas" width="1280" height="720"></canvas>
+        <div id="stats">
+            <h3>cef-thread-spike</h3>
+            <div class="row"><span>frames</span><span id="s-frames">0</span></div>
+            <div class="row"><span>frame ms (avg 1s)</span><span id="s-frame-ms">-</span></div>
+            <div class="row"><span>load (manual marker)</span><span id="s-load">idle</span></div>
+        </div>
+    </div>
+
+    <script>
+    // ---------------------------------------------------------------------
+    // Lightweight per-second telemetry. Don't change this — render thread
+    // logs paint counts independently, this is just visual.
+    // ---------------------------------------------------------------------
+    const elFrames  = document.getElementById('s-frames');
+    const elFrameMs = document.getElementById('s-frame-ms');
+    const elLoad    = document.getElementById('s-load');
+
+    let frameCount = 0;
+    let secondStart = performance.now();
+    let secondFrames = 0;
+
+    function tickStats() {
+        const now = performance.now();
+        secondFrames++;
+        if (now - secondStart >= 1000) {
+            elFrameMs.textContent = ((now - secondStart) / secondFrames).toFixed(2) + ' ms';
+            secondStart = now;
+            secondFrames = 0;
+        }
+        elFrames.textContent = String(frameCount);
+    }
+
+    // ---------------------------------------------------------------------
+    // YOUR STRESS LOGIC GOES HERE.
+    //
+    // This function is called once per requestAnimationFrame (≈60 Hz).
+    // Make it represent what your future BIM viewer UI will actually do
+    // under load. Three plausible profiles, pick one or mix:
+    //
+    //   1) JS-heavy:    tight numeric loops (e.g., simulate ~5ms of
+    //                   physics-style math per frame). Hits V8.
+    //   2) DOM-heavy:   add/remove/restyle 100-1000 elements per frame.
+    //                   Hits blink layout/style.
+    //   3) Canvas-heavy: draw 1000+ shapes/strokes/paths to <canvas>.
+    //                    Hits Renderer compositor + GPU process.
+    //
+    // Useful handles:
+    //   const ctx = document.getElementById('canvas').getContext('2d');
+    //   ctx.fillStyle = '...'; ctx.fillRect(x, y, w, h);
+    //
+    // Keep total per-frame cost realistic for your product (5-12 ms).
+    // ---------------------------------------------------------------------
+    function stressFrame() {
+        // TODO(user): replace this no-op with your stress workload (5-10 lines).
+        //
+        // Example placeholder so the page does *something* visible:
+        const ctx = document.getElementById('canvas').getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 1280, 720);
+        ctx.fillStyle = '#5eead4';
+        ctx.font = '24px monospace';
+        ctx.fillText('REPLACE stressFrame() WITH YOUR WORKLOAD', 80, 360);
+    }
+
+    function rafLoop() {
+        stressFrame();
+        frameCount++;
+        tickStats();
+        requestAnimationFrame(rafLoop);
+    }
+    requestAnimationFrame(rafLoop);
+    elLoad.textContent = 'rafLoop running';
+    </script>
+</body>
+</html>
