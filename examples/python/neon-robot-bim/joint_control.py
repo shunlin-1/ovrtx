@@ -160,7 +160,7 @@ def main() -> None:
         raise SystemExit(f"USD not found: {args.usd}")
 
     renderer = Renderer()
-    renderer.load_usd(str(args.usd))
+    renderer.add_usd(str(args.usd))
 
     # One-time binding — cached for every subsequent write.
     binding = renderer.bind_attribute(
@@ -181,7 +181,7 @@ def main() -> None:
         matrices = forward_kinematics(angles)
 
         binding.write(matrices)
-        renderer.step()
+        renderer.step(render_products={"ovrtx_debug_dump_stage"}, delta_time=0.0)
 
         if frame % 10 == 0:
             deg = np.degrees(angles)
@@ -193,6 +193,8 @@ def main() -> None:
             dump = get_stage_debug_dump(renderer)
             (dump_dir / f"frame_{frame:04d}.usda").write_text(
                 dump, encoding="utf-8")
+
+    binding.unbind()
 
     print(f"\n[done] Stage dumps in: {dump_dir}")
     print("       Open any frame_*.usda in usdview / Omniverse / Blender")
