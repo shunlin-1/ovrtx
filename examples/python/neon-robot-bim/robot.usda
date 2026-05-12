@@ -1,0 +1,97 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+    metersPerUnit = 1
+    doc = "Minimal 2-link robot for joint-control testing."
+)
+
+def Xform "World"
+{
+    def Xform "Robot"
+    {
+        # ─── link_1 (base / "shoulder") ───────────────────────────────
+        # Cube sized 1.0, sitting at the world origin.
+        # FK will rotate this prim about Z (joint angle 0).
+        def Xform "link_1"
+        {
+            # omni:xform is the ovrtx fast-path transform attribute.
+            # Identity here; joint_control.py overwrites every frame.
+            # Row-vector convention: translation in row 3.
+            custom matrix4d omni:xform = (
+                (1, 0, 0, 0),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (0, 0, 0, 1)
+            )
+
+            def Cube "geom"
+            {
+                double size = 1.0
+                color3f[] primvars:displayColor = [(0.25, 0.55, 0.9)]
+            }
+        }
+
+        # ─── link_2 (arm / "forearm") ─────────────────────────────────
+        # Smaller cube. Initial pose: offset 1.5 along world X from
+        # link_1, identity rotation. FK accumulates link_1's rotation
+        # plus link_2's joint angle (1) about Z.
+        def Xform "link_2"
+        {
+            custom matrix4d omni:xform = (
+                (1, 0, 0, 0),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (1.5, 0, 0, 1)
+            )
+
+            def Cube "geom"
+            {
+                double size = 0.6
+                color3f[] primvars:displayColor = [(0.95, 0.45, 0.25)]
+            }
+        }
+    }
+
+    # ─── Ground plane so cubes don't float in void ────────────────────
+    def Mesh "Ground"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [
+            (-10, -10, -0.5),
+            ( 10, -10, -0.5),
+            ( 10,  10, -0.5),
+            (-10,  10, -0.5)
+        ]
+        color3f[] primvars:displayColor = [(0.15, 0.15, 0.18)]
+    }
+
+    # ─── Lights ───────────────────────────────────────────────────────
+    def DomeLight "EnvLight"
+    {
+        float inputs:intensity = 600
+        color3f inputs:color = (1.0, 1.0, 1.0)
+    }
+
+    def DistantLight "SunLight"
+    {
+        float inputs:intensity = 2200
+        color3f inputs:color = (1.0, 0.95, 0.85)
+        float3 xformOp:rotateXYZ = (-50, 25, 15)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    # ─── Camera (orbit-ish view of the robot) ─────────────────────────
+    def Camera "Camera"
+    {
+        float focalLength = 30
+        float horizontalAperture = 24
+        float verticalAperture = 13.5
+        float2 clippingRange = (0.1, 10000)
+
+        double3 xformOp:translate = (4.5, -6, 4)
+        float3 xformOp:rotateXYZ = (60, 0, 35)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}
