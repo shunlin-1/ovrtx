@@ -25,3 +25,7 @@ endif()
 # Include all examples
 add_subdirectory(minimal)
 add_subdirectory(vulkan-interop)
+
+# Note: the hybrid C++ + Python AGV viewer moved to examples/hybrid/agv/.
+# Configure it directly from that directory; it shares this folder's
+# _deps/ via FETCHCONTENT_BASE_DIR so the ovrtx tarball is only fetched once.

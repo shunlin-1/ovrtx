@@ -1,0 +1,24 @@
+# CMake build trees
+build/
+build-fresh/
+build-*/
+
+# CMake / IDE intermediates
+.cache/
+.qt/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Generated artifacts (regenerated on every launch)
+agv_render.usda
+agv_render.picks.bin
+agv_render.picks.pkl
+
+# Dev screenshots / debug captures — keep ad-hoc, don't commit by default
+assets/Screenshot*
+
+# Python venv if anyone runs uv from this dir
+.venv/
+__pycache__/
+*.pyc
