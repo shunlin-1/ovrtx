@@ -71,6 +71,7 @@ target_compile_definitions(agv PRIVATE
     AGV_DEFAULT_USD="${AGV_DEFAULT_USD}"
     AGV_QML_DIR="${CMAKE_CURRENT_LIST_DIR}/qml"
     AGV_PICK_COLLECTOR="${CMAKE_CURRENT_LIST_DIR}/pick_collector_bin.py"
+    AGV_MDL_DIR="${CMAKE_CURRENT_LIST_DIR}/mdl"
 )
 
 # Bake the Qt runtime paths into the binary so `./build/agv` works

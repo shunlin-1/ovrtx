@@ -25,6 +25,24 @@ public:
     void orbit(double dx_pixels, double dy_pixels);
     void zoom(double ticks);
 
+    // Aim the orbit pivot at an explicit world-space point. Backend
+    // computes this from the scene-bbox center so the camera frames
+    // off-origin assets (e.g. BIM building exports).
+    void set_target(double x, double y, double z) {
+        target_x_ = x; target_y_ = y; target_z_ = z;
+    }
+
+    // Override the default zoom clamp. Default 0.1..500 is tuned for
+    // cm-scale AGV assets; meter or mm scenes need different limits.
+    void set_distance_limits(double min_d, double max_d) {
+        min_distance_ = min_d;
+        max_distance_ = max_d;
+    }
+
+    // Set the current distance directly (used to re-frame after
+    // computing scene extent).
+    void set_distance(double d) { distance_ = d; }
+
     // Row-vector world transform (omni:xform).
     Mat4d matrix() const;
 
@@ -37,6 +55,8 @@ private:
     double azimuth_;     // radians
     double elevation_;   // radians, clamped to ±89°
     char up_axis_;       // 'Y' or 'Z'
+    double min_distance_ = 0.1;     // overrideable via set_distance_limits
+    double max_distance_ = 500.0;
 };
 
 }  // namespace agv

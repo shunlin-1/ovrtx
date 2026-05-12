@@ -10,12 +10,14 @@
 
 namespace agv {
 
-// One mesh's broadphase entry. v1 of the binary format only carries
-// AABBs + bound-shader path; triangle data is omitted (deferred to v2
-// for the narrowphase pass). See pick_collector_bin.py for the writer.
+// One mesh's broadphase entry. v2 binary format carries AABBs +
+// bound-shader path + material name. Triangle data still omitted
+// (deferred to v3 for the narrowphase pass).
+// See pick_collector_bin.py for the writer.
 struct PickEntry {
     std::string             mesh_path;
     std::string             shader_path;
+    std::string             material_name;     // v2 — human-readable
     std::array<double, 3>   bb_min{};
     std::array<double, 3>   bb_max{};
     std::array<float, 3>    orig_color{};

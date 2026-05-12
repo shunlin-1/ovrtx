@@ -82,30 +82,36 @@ int main(int argc, char* argv[]) {
     std::printf("[main] Source USD: upAxis=%c mpu=%f distance=%.3f\n",
                 md.up_axis, md.meters_per_unit, distance);
 
+    // Write a sidecar that subLayers Test.usda (full content) and adds
+    // our camera + render product at the canonical kit-sensor scope.
+    // File-loaded sidecar — not inline content — is what ovrtx's sensor
+    // scheduler picks up; inline `usd_layer_content` didn't register
+    // RenderProducts.
     std::filesystem::path sidecar =
         std::filesystem::path(cli.usd_path).parent_path() / "agv_render.usda";
-
-    agv::SidecarConfig sc;
-    sc.scene_usd_path   = cli.usd_path;
-    sc.out_path         = sidecar.string();
-    sc.rendermode       = cli.rendermode;
-    sc.up_axis          = md.up_axis;
-    sc.meters_per_unit  = md.meters_per_unit;
-    if (!agv::write_sidecar(sc)) {
-        std::fprintf(stderr, "Failed to write sidecar: %s\n", sc.out_path.c_str());
-        return 1;
+    {
+        agv::SidecarConfig sc;
+        sc.scene_usd_path  = cli.usd_path;
+        sc.out_path        = sidecar.string();
+        sc.rendermode      = cli.rendermode;
+        sc.up_axis         = md.up_axis;
+        sc.meters_per_unit = md.meters_per_unit;
+        if (!agv::write_sidecar(sc)) {
+            std::fprintf(stderr, "Failed to write sidecar: %s\n",
+                         sc.out_path.c_str());
+            return 1;
+        }
+        std::printf("[main] Wrote sidecar: %s\n", sc.out_path.c_str());
     }
-    std::printf("[main] Wrote sidecar: %s\n", sc.out_path.c_str());
 
     // ── Pick collector subprocess ────────────────────────────────────
     // Runs the Python helper in its own ephemeral uv venv (PEP 723) so
-    // usd-core doesn't conflict with ovrtx's bundled USD. Output is a
-    // tiny binary (~30 KB) read by pick_table.cpp.
+    // usd-core doesn't conflict with ovrtx's bundled USD.
     std::filesystem::path picks_bin =
-        std::filesystem::path(sc.out_path).replace_extension(".picks.bin");
+        sidecar.parent_path() / "agv_render.picks.bin";
     {
         std::string cmd = std::string("uv run ") + AGV_PICK_COLLECTOR
-                        + " \"" + sc.out_path + "\""
+                        + " \"" + sidecar.string() + "\""
                         + " \"" + picks_bin.string() + "\"";
         std::printf("[main] Running pick collector: %s\n", cmd.c_str());
         int rc = std::system(cmd.c_str());
@@ -128,7 +134,10 @@ int main(int argc, char* argv[]) {
     auto* provider = new agv::FrameImageProvider();
     engine.addImageProvider(QStringLiteral("ovrtx"), provider);
 
-    agv::AgvBackend backend(provider, sc.out_path, md.up_axis,
+    // Backend loads the sidecar — subLayers brings Test.usda's full
+    // content (including /Environment lights) AND the sidecar adds
+    // camera + render product at the kit-sensor scope.
+    agv::AgvBackend backend(provider, sidecar.string(), md.up_axis,
                             distance, std::move(pick_table));
     engine.rootContext()->setContextProperty(QStringLiteral("ovrtxBackend"),
                                              &backend);

@@ -36,59 +36,93 @@ StageMetadata parse_stage_metadata(const std::string& usd_path) {
 }
 
 // [snippet:sidecar-writer]
+//
+// Sidecar layout (subLayers composition, not references):
+//
+//   subLayers = [@./<scene>.usda@]      ← pulls IN scene's full top-level
+//                                         tree (World, Environment, Render),
+//                                         no defaultPrim filter
+//   def Camera "AgvCamera" { ... }       ← top-level camera, apiSchemas to
+//                                         register as a renderable sensor
+//   def "Render"/...                     ← merges with scene's /Render,
+//                                         adds /AgvViewport under the
+//                                         canonical kit-sensor path
+//                                         /Render/OmniverseKit/HydraTextures
 bool write_sidecar(const SidecarConfig& cfg) {
     // Clipping range expressed in *scene units* — keeps the camera
     // sensible whether the source authored in mm, cm, or m.
     double near_v = 0.001    / cfg.meters_per_unit;
     double far_v  = 100000.0 / cfg.meters_per_unit;
 
+    // subLayers paths are resolved relative to the sidecar's location.
+    // Sidecar is written into the same directory as the scene file
+    // (see main.cpp), so a simple `./<basename>` works.
+    std::string scene_basename;
+    {
+        auto pos = cfg.scene_usd_path.find_last_of("/\\");
+        scene_basename = (pos == std::string::npos)
+            ? cfg.scene_usd_path
+            : cfg.scene_usd_path.substr(pos + 1);
+    }
+
     std::ostringstream ss;
     ss.imbue(std::locale::classic());  // no comma decimal separators
     ss << "#usda 1.0\n"
        << "(\n"
-       << "    defaultPrim = \"World\"\n"
+       << "    defaultPrim = \"AgvCamera\"\n"
        << "    upAxis = \"" << cfg.up_axis << "\"\n"
        << "    metersPerUnit = " << cfg.meters_per_unit << "\n"
+       << "    subLayers = [\n"
+       << "        @./" << scene_basename << "@\n"
+       << "    ]\n"
        << ")\n\n"
-       << "def Xform \"Root\" (\n"
-       << "    references = @" << cfg.scene_usd_path << "@\n"
+       // Top-level camera — kit-sensor-recognised via apiSchemas.
+       << "def Camera \"AgvCamera\" (\n"
+       << "    prepend apiSchemas = [\"OmniRtxCameraAutoExposureAPI_1\", \"OmniRtxCameraExposureAPI_1\"]\n"
        << ")\n"
-       << "{\n}\n\n"
-       << "def Xform \"World\"\n"
        << "{\n"
-       << "    def Camera \"Camera\"\n"
-       << "    {\n"
-       << "        token projection = \"perspective\"\n"
-       << "        float focalLength = "        << cfg.focal_length         << "\n"
-       << "        float horizontalAperture = " << cfg.horizontal_aperture  << "\n"
-       << "        float verticalAperture = "   << cfg.vertical_aperture    << "\n"
-       << "        float2 clippingRange = (" << near_v << ", " << far_v << ")\n"
-       << "        custom matrix4d omni:xform = (\n"
-       << "            (1, 0, 0, 0),\n"
-       << "            (0, 1, 0, 0),\n"
-       << "            (0, 0, 1, 0),\n"
-       << "            (0, 0, 4, 1)\n"
-       << "        )\n"
-       << "        uniform token[] xformOpOrder = [\"omni:xform\"]\n"
-       << "    }\n"
+       << "    token projection = \"perspective\"\n"
+       << "    float focalLength = "        << cfg.focal_length         << "\n"
+       << "    float horizontalAperture = " << cfg.horizontal_aperture  << "\n"
+       << "    float verticalAperture = "   << cfg.vertical_aperture    << "\n"
+       << "    float2 clippingRange = (" << near_v << ", " << far_v << ")\n"
+       << "    custom matrix4d omni:xform = (\n"
+       << "        (1, 0, 0, 0),\n"
+       << "        (0, 1, 0, 0),\n"
+       << "        (0, 0, 1, 0),\n"
+       << "        (0, 0, 4, 1)\n"
+       << "    )\n"
+       << "    uniform token[] xformOpOrder = [\"omni:xform\"]\n"
+       << "    float exposure:fStop = 5\n"
+       << "    float exposure:responsivity = 1\n"
+       << "    float exposure:time = 0.02\n"
        << "}\n\n"
+       // Render product at the canonical kit-sensor scope.
        << "def \"Render\"\n"
        << "{\n"
-       << "    def RenderProduct \"Camera\"\n"
+       << "    def \"OmniverseKit\"\n"
        << "    {\n"
-       << "        rel camera = </World/Camera>\n"
-       << "        rel orderedVars = </Render/Camera/LdrColor>\n"
-       << "        int2 resolution = (" << cfg.width << ", " << cfg.height << ")\n"
-       << "        custom token omni:rtx:rendermode = \"" << cfg.rendermode << "\"\n\n"
+       << "        def \"HydraTextures\"\n"
+       << "        {\n"
+       << "            def RenderProduct \"AgvViewport\" (\n"
+       << "                prepend apiSchemas = [\"OmniRtxSettingsCommonAdvancedAPI_1\", \"OmniRtxSettingsRtAdvancedAPI_1\", \"OmniRtxSettingsPtAdvancedAPI_1\"]\n"
+       << "            )\n"
+       << "            {\n"
+       << "                rel camera = </AgvCamera>\n"
+       << "                rel orderedVars = </Render/Vars/LdrColor>\n"
+       << "                uniform int2 resolution = (" << cfg.width << ", " << cfg.height << ")\n"
+       << "                custom token omni:rtx:rendermode = \"" << cfg.rendermode << "\"\n"
+       << "                token omni:rtx:background:source:type = \"domeLight\"\n"
+       << "            }\n"
+       << "        }\n"
+       << "    }\n"
+       << "    def \"Vars\"\n"
+       << "    {\n"
        << "        def RenderVar \"LdrColor\"\n"
        << "        {\n"
-       << "            string sourceName = \"LdrColor\"\n"
+       << "            uniform string sourceName = \"LdrColor\"\n"
+       << "            uniform token sourceType = \"raw\"\n"
        << "        }\n"
-       << "    }\n\n"
-       << "    def RenderSettings \"Settings\"\n"
-       << "    {\n"
-       << "        rel products = </Render/Camera>\n"
-       << "        custom token omni:rtx:rendermode = \"" << cfg.rendermode << "\"\n"
        << "    }\n"
        << "}\n";
 

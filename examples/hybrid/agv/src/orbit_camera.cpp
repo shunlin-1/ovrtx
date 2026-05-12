@@ -39,7 +39,7 @@ void OrbitCamera::orbit(double dx_pixels, double dy_pixels) {
 
 void OrbitCamera::zoom(double ticks) {
     distance_ *= std::pow(0.9, ticks);
-    distance_ = std::clamp(distance_, 0.1, 500.0);
+    distance_ = std::clamp(distance_, min_distance_, max_distance_);
 }
 // [/snippet:orbit-input]
 

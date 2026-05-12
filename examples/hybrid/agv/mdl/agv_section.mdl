@@ -1,0 +1,68 @@
+// agv_section.mdl
+//
+// Custom MDL for the AGV viewer's "Section Clip" feature.
+//
+// Drops every shaded fragment whose WORLD-SPACE Y coordinate is above
+// `cut_height_y`. The C++ side rebinds every mesh to this material
+// when Section Clip is enabled, then drives cut_height_y from the
+// Y-clip slider. Result: a true horizontal cross-section through the
+// scene — walls show their interior, not just disappear by mesh.
+//
+// Surface is intentionally plain (flat tint + optional rim emission)
+// because preserving the asset's original PBR look would require
+// forwarding every OmniPBR input through this material, which is a
+// much larger MDL exercise. This material is a "section overlay" —
+// when the user toggles Section Clip off, the C++ rebind restores
+// the original OmniPBR materials and the asset looks normal again.
+
+mdl 1.6;
+
+import df::*;
+import state::*;
+import math::*;
+import anno::*;
+import base::*;
+
+export material AgvSection(
+    color section_color = color(0.78, 0.85, 0.92)
+        [[ anno::display_name("Section Tint"),
+           anno::description("Flat colour applied to all surfaces below the cut.") ]],
+
+    float cut_height_y = 1.0e6
+        [[ anno::display_name("Cut Height (world Y)"),
+           anno::description("World-space Y above which fragments are discarded.") ]],
+
+    color rim_color = color(0.30, 0.85, 1.00)
+        [[ anno::display_name("Rim Emission Colour") ]],
+
+    float rim_intensity = 200.0
+        [[ anno::display_name("Rim Emission Intensity") ]]
+) [[
+    anno::display_name("AGV Section Clip"),
+    anno::description("Flat diffuse + rim glow with world-Y per-fragment discard.")
+]] =
+let {
+    // state::position() returns the shading point in the renderer's
+    // 'internal' (camera/object) coordinates. We need world space to
+    // compare against the user's slider value, which is in world Y.
+    float3 world_pos = state::transform_point(
+        state::coordinate_internal,
+        state::coordinate_world,
+        state::position());
+
+    // Cutout opacity is the field MDL exposes for per-fragment
+    // alpha-test/discard. 0.0 → fully discarded; 1.0 → kept.
+    float cutout = world_pos.y > cut_height_y ? 0.0 : 1.0;
+}
+in material(
+    surface: material_surface(
+        scattering: df::diffuse_reflection_bsdf(tint: section_color),
+        emission: material_emission(
+            emission:  df::diffuse_edf(),
+            intensity: rim_color * rim_intensity
+        )
+    ),
+    geometry: material_geometry(
+        cutout_opacity: cutout
+    )
+);

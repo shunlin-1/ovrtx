@@ -10,8 +10,9 @@
 namespace agv {
 
 namespace {
-constexpr std::uint32_t kMagic   = 0x50564741;  // "AGVP"
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kMagic       = 0x50564741;  // "AGVP"
+constexpr std::uint32_t kVersionMin  = 1;
+constexpr std::uint32_t kVersionMax  = 2;
 
 // Read N bytes into `dst` or return false. We never trust the file's
 // claimed sizes: every read is bounded and checked.
@@ -56,27 +57,40 @@ std::vector<PickEntry> load_pick_table(const std::string& bin_path) {
                      magic, kMagic);
         return entries;
     }
-    if (version != kVersion) {
+    if (version < kVersionMin || version > kVersionMax) {
         std::fprintf(stderr,
-                     "[picks] unsupported format version %u (want %u)\n",
-                     version, kVersion);
+                     "[picks] unsupported format version %u (want %u..%u)\n",
+                     version, kVersionMin, kVersionMax);
         return entries;
     }
+    const bool has_material_name = (version >= 2);
 
     entries.reserve(mesh_count);
     for (std::uint32_t i = 0; i < mesh_count; ++i) {
         PickEntry e;
         if (!read_len_string(in, e.mesh_path) ||
-            !read_len_string(in, e.shader_path) ||
-            !read_pod(in, e.bb_min) || !read_pod(in, e.bb_max) ||
+            !read_len_string(in, e.shader_path)) {
+            std::fprintf(stderr, "[picks] truncated at entry %u (paths)\n", i);
+            return entries;
+        }
+        if (has_material_name) {
+            if (!read_len_string(in, e.material_name)) {
+                std::fprintf(stderr,
+                             "[picks] truncated at entry %u (material_name)\n",
+                             i);
+                return entries;
+            }
+        }
+        if (!read_pod(in, e.bb_min) || !read_pod(in, e.bb_max) ||
             !read_pod(in, e.orig_color) || !read_pod(in, e.orig_intensity)) {
-            std::fprintf(stderr, "[picks] truncated at entry %u\n", i);
+            std::fprintf(stderr, "[picks] truncated at entry %u (geom)\n", i);
             return entries;
         }
         entries.push_back(std::move(e));
     }
-    std::fprintf(stderr, "[picks] loaded %zu meshes from %s\n",
-                 entries.size(), bin_path.c_str());
+    std::fprintf(stderr,
+                 "[picks] loaded %zu meshes from %s (v%u)\n",
+                 entries.size(), bin_path.c_str(), version);
     return entries;
 }
 // [/snippet:pick-table-load]
