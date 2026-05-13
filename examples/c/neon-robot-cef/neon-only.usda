@@ -1,0 +1,487 @@
+#usda 1.0
+#
+# Self-contained neon-ring scene with the GR1T2 robot at the centre.
+#
+# Each Neon_<i> is an Xform parent (animated by the C++ binary) containing
+# both an emissive UsdGeomSphere ("Ball") that's visible as a glowing mesh,
+# and a UsdLux SphereLight ("Light") that does the actual illumination.
+# Animating the parent xform moves both children together.
+
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    # Camera. vulkan-interop's mouse-orbit controller will overwrite this
+    # transform every frame; the initial pose just frames the priming pass.
+    def Camera "Camera"
+    {
+        float focalLength = 24
+        float horizontalAperture = 35.0
+        float verticalAperture = 20.955
+        float2 clippingRange = (0.01, 1000)
+
+        double3 xformOp:translate = (0, -6, 1.5)
+        double3 xformOp:rotateXYZ = (90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # 20 x 20 m flat slab as the floor.
+    def Cube "Ground"
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.18, 0.18, 0.22)]
+        double3 xformOp:scale = (20, 20, 0.05)
+        double3 xformOp:translate = (0, 0, -0.025)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    # HDRI environment dome -- same indoor exhibition-hall image the original
+    # robot-ovrtx scene used. Provides realistic background, reflections on
+    # the robot's metal surfaces, and warm ambient fill that complements the
+    # cool/saturated neon ring without competing with it.
+    def DomeLight "DomeFill" (
+        prepend apiSchemas = ["ShapingAPI"]
+    )
+    {
+        float inputs:intensity = 1000
+        asset inputs:texture:file = @https://omniverse-content-production.s3.us-west-2.amazonaws.com/Environments/2023_1/DomeLights/Indoor/ZetoCGcom_ExhibitionHall_Interior1.hdr@
+        token inputs:texture:format = "latlong"
+    }
+
+    # GR1T2 humanoid robot, referenced from the public robot-ovrtx scene on
+    # S3. Just the geometry comes through; render settings/cameras stay ours.
+    # Positioned at the origin so the neon ring orbits around it.
+    # The referenced GR1T2 prim authors its own xform stack:
+    #   translate = (0, 0, 0.9198)   -- lifts hip-origin so feet sit at Z=0
+    #   orient    = quat(...)        -- faces a particular direction
+    #   scale     = (1, 1, 1)
+    # We let those flow through unchanged so the robot stands on the floor.
+    # If we wanted to reposition, we'd add a fresh xformOp:translate AFTER
+    # the inherited stack via xformOpOrder = [<inherited ops>, "xformOp:translate:offset"].
+    def Xform "Robot" (
+        prepend references = @/home/shun/Downloads/robot-ovrtx.usda@</World/GR1T2_fourier_hand_6dof>
+    )
+    {
+    }
+
+    # Twelve neon "balls" arranged 30° apart on a 2.5 m ring -- denser ring
+    # so the orbit reads as a continuous neon halo rather than discrete
+    # points. Each is an Xform parent whose omni:xform is rewritten every
+    # frame by the C++ binary; the child Sphere mesh and SphereLight inherit
+    # the motion via USD transform composition. Initial xformOp:translate
+    # values just frame the priming pass; they're overwritten frame 1.
+    def Xform "Lights"
+    {
+        def Xform "Neon_0"
+        {
+            double3 xformOp:translate = (2.500, 0.000, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_0/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_0/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 0.30, 1.65)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 0.10, 0.55)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_1"
+        {
+            double3 xformOp:translate = (2.165, 1.250, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_1/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_1/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 0.30, 0.30)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 0.10, 0.10)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_2"
+        {
+            double3 xformOp:translate = (1.250, 2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_2/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_2/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 1.35, 0.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 0.45, 0.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_3"
+        {
+            double3 xformOp:translate = (0.000, 2.500, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_3/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_3/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 3.0, 0.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 1.00, 0.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_4"
+        {
+            double3 xformOp:translate = (-1.250, 2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_4/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_4/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (0.30, 3.0, 0.90)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (0.10, 1.00, 0.30)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_5"
+        {
+            double3 xformOp:translate = (-2.165, 1.250, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_5/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_5/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (0.0, 3.0, 3.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (0.00, 1.00, 1.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_6"
+        {
+            double3 xformOp:translate = (-2.500, 0.000, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_6/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_6/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (0.60, 1.20, 3.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (0.20, 0.40, 1.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_7"
+        {
+            double3 xformOp:translate = (-2.165, -1.250, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_7/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_7/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (0.90, 0.30, 3.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (0.30, 0.10, 1.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_8"
+        {
+            double3 xformOp:translate = (-1.250, -2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_8/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_8/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (1.65, 0.0, 3.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (0.55, 0.00, 1.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_9"
+        {
+            double3 xformOp:translate = (0.000, -2.500, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_9/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_9/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 0.30, 3.0)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 0.10, 1.00)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_10"
+        {
+            double3 xformOp:translate = (1.250, -2.165, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_10/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_10/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 1.80, 2.40)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 0.60, 0.80)
+                bool inputs:normalize = 1
+            }
+        }
+
+        def Xform "Neon_11"
+        {
+            double3 xformOp:translate = (2.165, -1.250, 1.500)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Sphere "Ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+            {
+                double radius = 0.18
+                rel material:binding = </World/Lights/Neon_11/Mat>
+            }
+            def Material "Mat"
+            {
+                token outputs:surface.connect = </World/Lights/Neon_11/Mat/Shader.outputs:surface>
+                def Shader "Shader"
+                {
+                    uniform token info:id = "UsdPreviewSurface"
+                    color3f inputs:emissiveColor = (3.0, 2.55, 1.50)
+                    color3f inputs:diffuseColor = (0, 0, 0)
+                    float inputs:roughness = 1
+                    float inputs:metallic = 0
+                    token outputs:surface
+                }
+            }
+            def SphereLight "Light" (prepend apiSchemas = ["ShapingAPI"])
+            {
+                float inputs:intensity = 30000
+                float inputs:radius = 0.18
+                color3f inputs:color = (1.00, 0.85, 0.50)
+                bool inputs:normalize = 1
+            }
+        }
+    }
+}
+
+def "Render"
+{
+    def RenderProduct "Camera"
+    {
+        rel camera = </World/Camera>
+        rel orderedVars = </Render/Camera/LdrColor>
+        int2 resolution = (1920, 1080)
+
+        # RTX Real-Time mode -- no path-tracer accumulation, no ghosting.
+        custom token omni:rtx:rendermode = "RaytracedLighting"
+
+        def RenderVar "LdrColor"
+        {
+            string sourceName = "LdrColor"
+        }
+    }
+
+    def RenderSettings "Settings"
+    {
+        rel products = </Render/Camera>
+        custom token omni:rtx:rendermode = "RaytracedLighting"
+    }
+}

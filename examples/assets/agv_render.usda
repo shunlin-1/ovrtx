@@ -1,0 +1,65 @@
+#usda 1.0
+(
+    defaultPrim = "AgvCamera"
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [
+        @./joint_example.usda@
+    ]
+)
+
+def Camera "AgvCamera" (
+    prepend apiSchemas = ["OmniRtxCameraAutoExposureAPI_1", "OmniRtxCameraExposureAPI_1"]
+)
+{
+    token projection = "perspective"
+    float focalLength = 18.5
+    float horizontalAperture = 20.955
+    float verticalAperture = 11.787
+    float2 clippingRange = (0.001, 100000)
+    custom matrix4d omni:xform = (
+        (1, 0, 0, 0),
+        (0, 1, 0, 0),
+        (0, 0, 1, 0),
+        (0, 0, 4, 1)
+    )
+    uniform token[] xformOpOrder = ["omni:xform"]
+    float exposure:fStop = 5
+    float exposure:responsivity = 1
+    float exposure:time = 0.02
+}
+
+def "Render"
+{
+    def "OmniverseKit"
+    {
+        def "HydraTextures"
+        {
+            def RenderProduct "AgvViewport" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostBloomPhysicalAPI_1"]
+            )
+            {
+                rel camera = </AgvCamera>
+                rel orderedVars = </Render/Vars/LdrColor>
+                uniform int2 resolution = (1920, 1080)
+                custom token omni:rtx:rendermode = "Real-Time Path-Tracing"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:autoExposure:enabled = 1
+                bool omni:rtx:post:bloom:enabled = 1
+                float omni:rtx:post:bloom:scale = 0.8
+                float omni:rtx:post:bloom:fStop = -68
+                float3 omni:rtx:post:bloom:cutoff = (4000, 3000, 1500)
+                float omni:rtx:post:bloom:cutoffFuzziness = 1
+                int omni:rtx:post:bloom:aperture:blades = 6
+            }
+        }
+    }
+    def "Vars"
+    {
+        def RenderVar "LdrColor"
+        {
+            uniform string sourceName = "LdrColor"
+            uniform token sourceType = "raw"
+        }
+    }
+}

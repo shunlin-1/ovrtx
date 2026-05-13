@@ -1,0 +1,412 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 1
+    doc = """Joint example for both Omniverse (PhysX simulation) and
+             ovrtx (kinematic, transform-driven). Open in Omniverse and
+             press Play to see the left arm fall under gravity; the right
+             arm is driven by the hybrid viewer's FK driver
+             (agv_backend.cpp [snippet:fk-driver]).
+
+             Coordinate system: Y-up, meters. Two arms sit on a ground
+             plane at Y=0:
+               /World/PhysicsArm  — UsdPhysics revolute joint (PhysX)
+               /World/KinematicArm — omni:xform attribute (transform writes)
+
+             All visible cubes are authored as `def Mesh` (not `def Cube`)
+             so the hybrid viewer's pick collector enumerates them, and
+             each has an MDL material bound so the Neon / Xray buttons
+             actually have a shader prim to write into.
+          """
+)
+
+def Xform "World"
+{
+    # ──────────────────────────────────────────────────────────────────
+    # PhysicsScene — Omniverse PhysX simulator picks this up at Play.
+    # ovrtx will read it (and ignore it) without complaint.
+    # ──────────────────────────────────────────────────────────────────
+    def PhysicsScene "PhysicsScene"
+    {
+        float3 physics:gravityDirection = (0, -1, 0)
+        float physics:gravityMagnitude = 9.81
+    }
+
+    # ──────────────────────────────────────────────────────────────────
+    # Looks — OmniPBR materials, two shared between both arms so picking
+    # a "blue" cube on either side flips the same shader. If you'd
+    # rather see them toggle independently, duplicate these per cube.
+    # ──────────────────────────────────────────────────────────────────
+    def Scope "Looks"
+    {
+        def Material "BlueMaterial"
+        {
+            token outputs:mdl:displacement.connect = </World/Looks/BlueMaterial/Shader.outputs:out>
+            token outputs:mdl:surface.connect      = </World/Looks/BlueMaterial/Shader.outputs:out>
+            token outputs:mdl:volume.connect       = </World/Looks/BlueMaterial/Shader.outputs:out>
+
+            def Shader "Shader"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @OmniPBR.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "OmniPBR"
+                color3f inputs:diffuse_color_constant = (0.20, 0.40, 0.85)
+                # These three are what material_overrides.cpp writes to.
+                # Authoring sensible defaults makes the "restore" path
+                # exact: when the toggle goes off, we put these values back.
+                color3f inputs:emissive_color = (1.0, 1.0, 1.0)
+                float inputs:emissive_intensity = 0.0
+                bool inputs:enable_emission = 0
+                float inputs:opacity_constant = 1.0
+                bool inputs:enable_opacity = 0
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        def Material "OrangeMaterial"
+        {
+            token outputs:mdl:displacement.connect = </World/Looks/OrangeMaterial/Shader.outputs:out>
+            token outputs:mdl:surface.connect      = </World/Looks/OrangeMaterial/Shader.outputs:out>
+            token outputs:mdl:volume.connect       = </World/Looks/OrangeMaterial/Shader.outputs:out>
+
+            def Shader "Shader"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @OmniPBR.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "OmniPBR"
+                color3f inputs:diffuse_color_constant = (0.90, 0.45, 0.20)
+                color3f inputs:emissive_color = (1.0, 1.0, 1.0)
+                float inputs:emissive_intensity = 0.0
+                bool inputs:enable_emission = 0
+                float inputs:opacity_constant = 1.0
+                bool inputs:enable_opacity = 0
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+
+        # Neon orb material — extreme emissive intensity authored on the
+        # mesh itself. Pre-baked "blown out" look (white core, cyan rim).
+        # The matching SphereLight below provides radiometric energy so
+        # the floor and arms also pick up cyan illumination.
+        def Material "NeonOrbMaterial"
+        {
+            token outputs:mdl:displacement.connect = </World/Looks/NeonOrbMaterial/Shader.outputs:out>
+            token outputs:mdl:surface.connect      = </World/Looks/NeonOrbMaterial/Shader.outputs:out>
+            token outputs:mdl:volume.connect       = </World/Looks/NeonOrbMaterial/Shader.outputs:out>
+
+            def Shader "Shader"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @OmniPBR.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "OmniPBR"
+                color3f inputs:diffuse_color_constant = (0.30, 0.90, 1.0)
+                color3f inputs:emissive_color = (0.30, 0.90, 1.0)
+                float inputs:emissive_intensity = 50000.0
+                bool inputs:enable_emission = 1
+                float inputs:opacity_constant = 1.0
+                bool inputs:enable_opacity = 0
+                token outputs:out (
+                    renderType = "material"
+                )
+            }
+        }
+    }
+
+    # ──────────────────────────────────────────────────────────────────
+    # Ground plane (collider for PhysX, visible mesh for both renderers)
+    # ──────────────────────────────────────────────────────────────────
+    def Mesh "Ground" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [
+            (-8, 0, -8),
+            ( 8, 0, -8),
+            ( 8, 0,  8),
+            (-8, 0,  8)
+        ]
+        normal3f[] normals = [(0,1,0), (0,1,0), (0,1,0), (0,1,0)] (
+            interpolation = "vertex"
+        )
+        color3f[] primvars:displayColor = [(0.35, 0.35, 0.38)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    # ──────────────────────────────────────────────────────────────────
+    # PHYSICS ARM (left side, x = -2)
+    # PhysX simulates this on Play in Omniverse. ovrtx renders it static.
+    # ──────────────────────────────────────────────────────────────────
+    def Xform "PhysicsArm" (
+        prepend apiSchemas = ["PhysicsArticulationRootAPI"]
+    )
+    {
+        def Xform "BaseLink" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            bool physics:kinematicEnabled = true
+            float physics:mass = 1.0
+            double3 xformOp:translate = (-2, 1, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            # size = 0.4 cube, centered at link origin.
+            def Mesh "geom" (
+                prepend apiSchemas = [
+                    "PhysicsCollisionAPI",
+                    "PhysicsMeshCollisionAPI",
+                    "MaterialBindingAPI"
+                ]
+            )
+            {
+                rel material:binding = </World/Looks/BlueMaterial>
+                uniform token physics:approximation = "convexHull"
+
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                # CCW winding from outside. The three faces marked
+                # below had inverted winding in the first draft, which
+                # made their normals point into the cube — emissive
+                # surfaces are one-sided, so neon mode only lit three
+                # of the six faces.
+                int[] faceVertexIndices = [
+                    0, 3, 2, 1,    4, 5, 6, 7,     # -Z (fixed), +Z
+                    0, 1, 5, 4,    3, 7, 6, 2,     # -Y,         +Y (fixed)
+                    0, 4, 7, 3,    1, 2, 6, 5      # -X,         +X (fixed)
+                ]
+                point3f[] points = [
+                    (-0.2, -0.2, -0.2), ( 0.2, -0.2, -0.2),
+                    ( 0.2,  0.2, -0.2), (-0.2,  0.2, -0.2),
+                    (-0.2, -0.2,  0.2), ( 0.2, -0.2,  0.2),
+                    ( 0.2,  0.2,  0.2), (-0.2,  0.2,  0.2)
+                ]
+                color3f[] primvars:displayColor = [(0.20, 0.40, 0.85)]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+
+        def Xform "UpperArm" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        )
+        {
+            float physics:mass = 1.0
+            double3 xformOp:translate = (-1, 1, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            # size = 1.4 cube → points at ±0.7.
+            def Mesh "geom" (
+                prepend apiSchemas = [
+                    "PhysicsCollisionAPI",
+                    "PhysicsMeshCollisionAPI",
+                    "MaterialBindingAPI"
+                ]
+            )
+            {
+                rel material:binding = </World/Looks/OrangeMaterial>
+                uniform token physics:approximation = "convexHull"
+
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                # CCW winding from outside. The three faces marked
+                # below had inverted winding in the first draft, which
+                # made their normals point into the cube — emissive
+                # surfaces are one-sided, so neon mode only lit three
+                # of the six faces.
+                int[] faceVertexIndices = [
+                    0, 3, 2, 1,    4, 5, 6, 7,     # -Z (fixed), +Z
+                    0, 1, 5, 4,    3, 7, 6, 2,     # -Y,         +Y (fixed)
+                    0, 4, 7, 3,    1, 2, 6, 5      # -X,         +X (fixed)
+                ]
+                point3f[] points = [
+                    (-0.7, -0.7, -0.7), ( 0.7, -0.7, -0.7),
+                    ( 0.7,  0.7, -0.7), (-0.7,  0.7, -0.7),
+                    (-0.7, -0.7,  0.7), ( 0.7, -0.7,  0.7),
+                    ( 0.7,  0.7,  0.7), (-0.7,  0.7,  0.7)
+                ]
+                color3f[] primvars:displayColor = [(0.90, 0.45, 0.20)]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+
+        def PhysicsRevoluteJoint "Shoulder"
+        {
+            rel physics:body0 = </World/PhysicsArm/BaseLink>
+            rel physics:body1 = </World/PhysicsArm/UpperArm>
+
+            uniform token physics:axis = "Z"
+
+            point3f physics:localPos0 = (0.2, 0, 0)
+            quatf   physics:localRot0 = (1, 0, 0, 0)
+            point3f physics:localPos1 = (-0.7, 0, 0)
+            quatf   physics:localRot1 = (1, 0, 0, 0)
+
+            float physics:lowerLimit = -120
+            float physics:upperLimit = 120
+        }
+    }
+
+    # ──────────────────────────────────────────────────────────────────
+    # KINEMATIC ARM (right side, x = +2)
+    # omni:xform on each link; the hybrid viewer's FK driver overwrites
+    # these every frame so the arms swing under Python/C++ kinematics.
+    # ──────────────────────────────────────────────────────────────────
+    def Xform "KinematicArm"
+    {
+        def Xform "link_1"
+        {
+            custom matrix4d omni:xform = (
+                (1, 0, 0, 0),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (2, 0.5, 0, 1)
+            )
+
+            # size = 0.9 cube → points at ±0.45.
+            def Mesh "geom" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </World/Looks/BlueMaterial>
+
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                # CCW winding from outside. The three faces marked
+                # below had inverted winding in the first draft, which
+                # made their normals point into the cube — emissive
+                # surfaces are one-sided, so neon mode only lit three
+                # of the six faces.
+                int[] faceVertexIndices = [
+                    0, 3, 2, 1,    4, 5, 6, 7,     # -Z (fixed), +Z
+                    0, 1, 5, 4,    3, 7, 6, 2,     # -Y,         +Y (fixed)
+                    0, 4, 7, 3,    1, 2, 6, 5      # -X,         +X (fixed)
+                ]
+                point3f[] points = [
+                    (-0.45, -0.45, -0.45), ( 0.45, -0.45, -0.45),
+                    ( 0.45,  0.45, -0.45), (-0.45,  0.45, -0.45),
+                    (-0.45, -0.45,  0.45), ( 0.45, -0.45,  0.45),
+                    ( 0.45,  0.45,  0.45), (-0.45,  0.45,  0.45)
+                ]
+                color3f[] primvars:displayColor = [(0.25, 0.55, 0.90)]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+
+        def Xform "link_2"
+        {
+            custom matrix4d omni:xform = (
+                (1, 0, 0, 0),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (3.2, 0.5, 0, 1)
+            )
+
+            # size = 0.55 cube → points at ±0.275.
+            def Mesh "geom" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </World/Looks/OrangeMaterial>
+
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                # CCW winding from outside. The three faces marked
+                # below had inverted winding in the first draft, which
+                # made their normals point into the cube — emissive
+                # surfaces are one-sided, so neon mode only lit three
+                # of the six faces.
+                int[] faceVertexIndices = [
+                    0, 3, 2, 1,    4, 5, 6, 7,     # -Z (fixed), +Z
+                    0, 1, 5, 4,    3, 7, 6, 2,     # -Y,         +Y (fixed)
+                    0, 4, 7, 3,    1, 2, 6, 5      # -X,         +X (fixed)
+                ]
+                point3f[] points = [
+                    (-0.275, -0.275, -0.275), ( 0.275, -0.275, -0.275),
+                    ( 0.275,  0.275, -0.275), (-0.275,  0.275, -0.275),
+                    (-0.275, -0.275,  0.275), ( 0.275, -0.275,  0.275),
+                    ( 0.275,  0.275,  0.275), (-0.275,  0.275,  0.275)
+                ]
+                color3f[] primvars:displayColor = [(0.95, 0.45, 0.25)]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+    }
+
+    # ──────────────────────────────────────────────────────────────────
+    # Lights & camera
+    # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────
+    # NeonOrb — "blow out" light ball test.
+    #
+    # Pair of co-located prims that together simulate a bright glowing
+    # orb that overexposes the camera:
+    #
+    #   Body  = def Sphere with NeonOrbMaterial bound. The mesh you SEE
+    #           in the rendered image. At emissive_intensity = 50000 the
+    #           camera-facing pixels saturate to white at the center
+    #           with a cyan fringe — the "blow out" effect.
+    #
+    #   Light = SphereLight matching the orb's color/position/radius.
+    #           This is what actually casts cyan light onto the floor
+    #           and arms via path-traced GI. Without this, the orb
+    #           would look bright but wouldn't illuminate anything.
+    #
+    # Both at radius 0.5 so the SphereLight's soft-shadow geometry
+    # matches the visible sphere — the renderer treats them as the
+    # same physical object. Move the translate to reposition.
+    # ──────────────────────────────────────────────────────────────────
+    def Xform "NeonOrb"
+    {
+        double3 xformOp:translate = (0, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Sphere "Body" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            double radius = 0.5
+            rel material:binding = </World/Looks/NeonOrbMaterial>
+            color3f[] primvars:displayColor = [(0.30, 0.90, 1.0)]
+        }
+
+        def SphereLight "Light"
+        {
+            float inputs:intensity = 80000
+            color3f inputs:color = (0.30, 0.90, 1.0)
+            float inputs:radius = 0.5
+            # USD Lux convention. Some renderer versions also render the
+            # light's analytic shape via this flag — harmless if ignored.
+            bool inputs:visibleInPrimaryRay = 1
+        }
+    }
+
+    # Lighting is intentionally dim — the neon mode looks more like a
+    # "sun" when ambient illumination doesn't compete. Bump intensities
+    # back to 600/3500 for normal viewing if neon isn't being used.
+    def DomeLight "Sky"
+    {
+        float inputs:intensity = 80
+        color3f inputs:color = (0.45, 0.55, 0.75)
+    }
+
+    def DistantLight "Sun"
+    {
+        float inputs:intensity = 400
+        color3f inputs:color = (1.0, 0.94, 0.82)
+        float3 xformOp:rotateXYZ = (-45, 25, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def Camera "Camera"
+    {
+        float focalLength = 28
+        float horizontalAperture = 36
+        float verticalAperture = 20.25
+        float2 clippingRange = (0.05, 1000)
+
+        double3 xformOp:translate = (0, 3.5, 7)
+        float3 xformOp:rotateXYZ = (-15, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}
