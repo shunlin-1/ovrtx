@@ -105,7 +105,13 @@ bool write_sidecar(const SidecarConfig& cfg) {
        << "        def \"HydraTextures\"\n"
        << "        {\n"
        << "            def RenderProduct \"AgvViewport\" (\n"
-       << "                prepend apiSchemas = [\"OmniRtxSettingsCommonAdvancedAPI_1\", \"OmniRtxSettingsRtAdvancedAPI_1\", \"OmniRtxSettingsPtAdvancedAPI_1\"]\n"
+       // OmniRtxPostBloomPhysicalAPI_1 is the apiSchema that unlocks
+       // the omni:rtx:post:bloom:* attribute slot on this RenderProduct.
+       // Without it ovrtx rejects the bloom attributes (causing
+       // "Couldn't find sensor prim associated with the render product"
+       // and "Invalid USD RenderProduct Prim"). With it, the bloom
+       // post-process actually runs at render time.
+       << "                prepend apiSchemas = [\"OmniRtxSettingsCommonAdvancedAPI_1\", \"OmniRtxSettingsRtAdvancedAPI_1\", \"OmniRtxSettingsPtAdvancedAPI_1\", \"OmniRtxPostBloomPhysicalAPI_1\"]\n"
        << "            )\n"
        << "            {\n"
        << "                rel camera = </AgvCamera>\n"
@@ -113,6 +119,39 @@ bool write_sidecar(const SidecarConfig& cfg) {
        << "                uniform int2 resolution = (" << cfg.width << ", " << cfg.height << ")\n"
        << "                custom token omni:rtx:rendermode = \"" << cfg.rendermode << "\"\n"
        << "                token omni:rtx:background:source:type = \"domeLight\"\n"
+       // Auto-exposure: tonemapper adapts to scene brightness so an
+       // emissive cube doesn't clip the whole image to white. Same knob
+       // the planet-system example uses. Without this, the neon mode's
+       // bright emissive surface dominates the tonemap and everything
+       // around it goes black (or the cube itself turns pure white).
+       << "                bool omni:rtx:autoExposure:enabled = 1\n"
+       // ── Physical bloom (ovrtx-native) ───────────────────────────────
+       // Copied from examples/python/agv/Test.usda's working
+       // RenderProduct, with OmniRtxPostBloomPhysicalAPI_1 added to
+       // apiSchemas above. Models camera-lens bloom physically:
+       //
+       //   enabled           — on/off
+       //   scale             — overall halo brightness (0.0–1.0).
+       //                       0.3 is subtle, 1.0 is dramatic.
+       //   fStop             — aperture stop. LOWER (more negative) =
+       //                       WIDER halo. -68 = very wide (Test.usda
+       //                       value). -20 = moderate. 0 = tight.
+       //   cutoff            — per-RGB HDR radiance threshold above
+       //                       which a pixel contributes bloom. Pre-
+       //                       tonemap, so values are in scene radiance
+       //                       units (thousands). (4000, 3000, 1500)
+       //                       = trigger only on very bright pixels.
+       //   cutoffFuzziness   — soft-threshold falloff (0 = hard, 1 =
+       //                       smooth). 1 looks more natural.
+       //   aperture:blades   — number of polygon sides for the lens-
+       //                       star streak shape. 6 = hexagonal,
+       //                       10 = nearly circular.
+       << "                bool omni:rtx:post:bloom:enabled = 1\n"
+       << "                float omni:rtx:post:bloom:scale = 0.8\n"
+       << "                float omni:rtx:post:bloom:fStop = -68\n"
+       << "                float3 omni:rtx:post:bloom:cutoff = (4000, 3000, 1500)\n"
+       << "                float omni:rtx:post:bloom:cutoffFuzziness = 1\n"
+       << "                int omni:rtx:post:bloom:aperture:blades = 6\n"
        << "            }\n"
        << "        }\n"
        << "    }\n"

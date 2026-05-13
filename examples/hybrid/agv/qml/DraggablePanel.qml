@@ -11,7 +11,6 @@
 //   }
 //
 // Layer stack (back → front):
-//   0. shadowShape + blurPass      — outer drop shadow.
 //   1. ShaderEffectSource          — live capture of backdropSource.
 //   2. MultiEffect (blurPass)      — Gaussian blur → texture.
 //   3. ShaderEffect (refract.frag) — refraction + dispersion + tint +
@@ -79,43 +78,8 @@ Item {
     property real   borderWidth: 1.0
     property color  borderColor: Qt.rgba(1, 1, 1, 0.28)
 
-    // Outer drop shadow. shadowOffset = (0, 0) ⇒ symmetric radial halo
-    // around the panel — top and bottom edges look identical, no
-    // implied "light direction" anywhere. (Set offsetY > 0 if you want
-    // a "light from above" cue back; you'll get top-vs-bottom
-    // asymmetry as a consequence.)
-    property bool   shadowEnabled: true
-    property real   shadowOffsetX: 0
-    property real   shadowOffsetY: 0
-    property int    shadowBlurMax: 64
-    property color  shadowColor: Qt.rgba(0, 0, 0, 0.50)
-
     // Header
     property color  headerColor: Qt.rgba(1.0, 1.0, 1.0, 0.06)
-
-    // ── 0. Outer drop shadow ────────────────────────────────────────
-    Rectangle {
-        id: shadowShape
-        x: panel.shadowOffsetX
-        y: panel.shadowOffsetY
-        width: panel.width
-        height: panel.height
-        radius: panel.radius
-        color: panel.shadowColor
-        visible: false
-        layer.enabled: true
-        layer.smooth: true
-    }
-    MultiEffect {
-        anchors.fill: shadowShape
-        source: shadowShape
-        visible: panel.shadowEnabled
-        blurEnabled: true
-        blur: 1.0
-        blurMax: panel.shadowBlurMax
-        autoPaddingEnabled: true
-        z: -1
-    }
 
     // ── 1. Capture the backdrop region beneath this panel ───────────
     ShaderEffectSource {

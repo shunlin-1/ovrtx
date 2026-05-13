@@ -13,15 +13,29 @@ namespace agv {
 
 namespace {
 
-// Mode presets — match examples/python/agv/main.py constants.
+// Mode presets — calibrated for the Test.usda CloudySky lighting
+// (DistantLight intensity ~5000 in nit-ish units).
+//
+// Tweak these to taste. With autoExposure on (sidecar.cpp) and the
+// dim joint_example.usda sky (DomeLight 80 + DistantLight 400), the
+// tonemapper has plenty of dynamic range — pushing intensity past
+// ~3000 is where the cyan starts visibly clipping toward white at the
+// surface CENTER, even though the rest of the surface stays cyan-
+// tinted. That whitening is what reads as "sun core" so it's actually
+// desirable for the neon look up to a point.
+//
+//   1500   = bright cyan, no white core (previous default)
+//   8000   = strong cyan with white-hot center (current)
+//   30000+ = pure white core, cyan only at the very edge — feels less
+//            "neon" and more "raw furnace". Probably too hot.
 constexpr float kNeonColor[3]   = {0.30f, 0.90f, 1.00f};
-constexpr float kNeonIntensity  = 10000.0f;
+constexpr float kNeonIntensity  = 8000.0f;
 
 constexpr float kXrayOpacity    = 0.15f;
 
 constexpr float kXrayLightColor[3]    = {0.30f, 0.90f, 1.00f};
 constexpr float kXrayLightOpacity     = 0.40f;
-constexpr float kXrayLightIntensity   = 1500.0f;
+constexpr float kXrayLightIntensity   = 4000.0f;     // matches neon scale
 
 template <typename ResultT>
 bool check(ResultT const& r, const char* op) {
@@ -82,257 +96,12 @@ bool write_inline(ovrtx_renderer_t* renderer,
     return !check(wr, attr_name);
 }
 
-// Batched float-attribute write: ONE ovrtx call, N prims, ONE value
-// per prim (the value is broadcast to all of them). Used by the global
-// X-ray Neon slider where every material gets the same opacity etc.
-//
-// `lanes` packs the components (3 for color, 1 for scalar).
-bool write_inline_broadcast(ovrtx_renderer_t* renderer,
-                            const std::vector<ovx_string_t>& prim_paths,
-                            const char* attr_name,
-                            uint8_t dtype_code, uint8_t dtype_bits,
-                            uint16_t lanes, void* data) {
-    if (prim_paths.empty()) return true;
-
-    ovrtx_prim_list_t prim_list{};
-    prim_list.prim_paths = const_cast<ovx_string_t*>(prim_paths.data());
-    prim_list.num_paths = prim_paths.size();
-
-    ovrtx_attribute_type_t at{};
-    at.dtype = {dtype_code, dtype_bits, lanes};
-    at.is_array = false;
-
-    ovrtx_binding_desc_t b{};
-    b.prim_list = prim_list;
-    b.attribute_name.string = {attr_name, std::strlen(attr_name)};
-    b.attribute_type = at;
-    b.prim_mode = OVRTX_BINDING_PRIM_MODE_EXISTING_ONLY;
-    b.flags = OVRTX_BINDING_FLAG_NONE;
-
-    ovrtx_binding_desc_or_handle_t boh{};
-    boh.binding_desc = b;
-
-    // One tensor — broadcast across all prims in prim_list (ovrtx's
-    // semantics when tensor_count == 1 and num_paths > 1).
-    DLTensor t{};
-    t.data = data;
-    t.device = {kDLCPU, 0};
-    t.ndim = 1;
-    int64_t shape[1] = {1};
-    t.shape = shape;
-    t.dtype = {dtype_code, dtype_bits, lanes};
-
-    ovrtx_input_buffer_t in_buf{};
-    in_buf.tensors = &t;
-    in_buf.tensor_count = 1;
-
-    auto wr = ovrtx_write_attribute(renderer, &boh, &in_buf,
-                                    OVRTX_DATA_ACCESS_SYNC);
-    return !check(wr, attr_name);
-}
-
 }  // namespace
 
-bool apply_global_xray_neon(ovrtx_renderer_t* renderer,
-                            const std::vector<std::string>& shader_paths,
-                            const std::vector<std::array<float, 3>>& orig_colors,
-                            const std::vector<float>& orig_intensities,
-                            double v) {
-    if (shader_paths.empty()) return true;
-
-    // Build prim_list once — reused across the 4 batched attribute writes.
-    std::vector<ovx_string_t> paths;
-    paths.reserve(shader_paths.size());
-    for (const auto& s : shader_paths) paths.push_back({s.c_str(), s.size()});
-
-    // ovrtx_write_attribute doesn't broadcast a single tensor across
-    // multiple prims — passing num_paths=N + tensor_count=1 writes
-    // only the first prim. So we iterate: one write per shader per
-    // attribute. Slow on paper (N×5 calls per slider edit) but only
-    // fires on slider change, not per frame.
-
-    if (v <= 0.0) {
-        // Restore — each shader gets its own original color + intensity.
-        for (std::size_t i = 0; i < shader_paths.size(); ++i) {
-            float c[3] = {orig_colors[i][0], orig_colors[i][1], orig_colors[i][2]};
-            write_inline(renderer, shader_paths[i], "inputs:emissive_color",
-                         kDLFloat, 32, 3, c);
-            float intensity = orig_intensities[i];
-            write_inline(renderer, shader_paths[i], "inputs:emissive_intensity",
-                         kDLFloat, 32, 1, &intensity);
-            std::uint8_t emit_flag = intensity > 0.0f ? 1 : 0;
-            write_inline(renderer, shader_paths[i], "inputs:enable_emission",
-                         kDLUInt, 8, 1, &emit_flag);
-
-            float opacity_one = 1.0f;
-            write_inline(renderer, shader_paths[i], "inputs:opacity_constant",
-                         kDLFloat, 32, 1, &opacity_one);
-            std::uint8_t opac_off = 0;
-            write_inline(renderer, shader_paths[i], "inputs:enable_opacity",
-                         kDLUInt, 8, 1, &opac_off);
-        }
-        return true;
-    }
-
-    // Apply: linear interpolate opacity from 1.0 → 0.10 (very translucent
-    // so the camera can actually see behind) and emission from 0 → 1200
-    // (modest cyan rim — bright enough to outline shapes, dim enough not
-    // to obscure depth perception). Color is cyan throughout.
-    float opacity = 1.0f - 0.90f * float(v);
-    float intensity = 1200.0f * float(v);
-    float color[3] = {0.30f, 0.90f, 1.00f};   // neon cyan
-    std::uint8_t emit_on = 1;
-    std::uint8_t opac_on = 1;
-
-    for (const auto& sp : shader_paths) {
-        write_inline(renderer, sp, "inputs:emissive_color",
-                     kDLFloat, 32, 3, color);
-        write_inline(renderer, sp, "inputs:emissive_intensity",
-                     kDLFloat, 32, 1, &intensity);
-        write_inline(renderer, sp, "inputs:enable_emission",
-                     kDLUInt, 8, 1, &emit_on);
-        write_inline(renderer, sp, "inputs:opacity_constant",
-                     kDLFloat, 32, 1, &opacity);
-        write_inline(renderer, sp, "inputs:enable_opacity",
-                     kDLUInt, 8, 1, &opac_on);
-    }
-    return true;
-}
-
-bool apply_visibility(ovrtx_renderer_t* renderer,
-                      const std::vector<std::string>& mesh_paths,
-                      const std::vector<bool>& hide_mask) {
-    if (mesh_paths.size() != hide_mask.size() || mesh_paths.empty())
-        return true;
-
-    // Tokens are passed as `ovx_string_t` (16 bytes = 128 bits) per
-    // ovrtx's binding spec at bindings.py:427 —
-    //   "OVRTX_SEMANTIC_TOKEN_STRING ... ovx_string_t (kDLUInt, 128, 1)"
-    // NOT the raw string bytes with bits=8. Storing the {ptr,length}
-    // struct in the tensor lets ovrtx index the token's content
-    // directly.
-    static const char* kInvisible = "invisible";
-    static const char* kInherited = "inherited";
-
-    bool all_ok = true;
-    for (std::size_t i = 0; i < mesh_paths.size(); ++i) {
-        const char* token_str = hide_mask[i] ? kInvisible : kInherited;
-        ovx_string_t token_value = {token_str, std::strlen(token_str)};
-
-        ovx_string_t pp = {mesh_paths[i].c_str(), mesh_paths[i].size()};
-        ovrtx_prim_list_t prim_list{};
-        prim_list.prim_paths = &pp;
-        prim_list.num_paths = 1;
-
-        ovrtx_attribute_type_t at{};
-        at.dtype = {kDLUInt, 128, 1};       // ← per ovrtx token spec
-        at.is_array = false;
-        at.semantic = OVRTX_SEMANTIC_TOKEN_STRING;
-
-        ovrtx_binding_desc_t b{};
-        b.prim_list = prim_list;
-        b.attribute_name.string = {"visibility", 10};
-        b.attribute_type = at;
-        b.prim_mode = OVRTX_BINDING_PRIM_MODE_EXISTING_ONLY;
-        b.flags = OVRTX_BINDING_FLAG_NONE;
-
-        ovrtx_binding_desc_or_handle_t boh{};
-        boh.binding_desc = b;
-
-        DLTensor t{};
-        t.data = &token_value;              // pass the ovx_string_t struct
-        t.device = {kDLCPU, 0};
-        t.ndim = 1;
-        int64_t shape[1] = {1};             // one token, not N bytes
-        t.shape = shape;
-        t.dtype = {kDLUInt, 128, 1};
-
-        ovrtx_input_buffer_t in_buf{};
-        in_buf.tensors = &t;
-        in_buf.tensor_count = 1;
-
-        auto wr = ovrtx_write_attribute(renderer, &boh, &in_buf,
-                                        OVRTX_DATA_ACCESS_SYNC);
-        if (check(wr, "visibility")) all_ok = false;
-    }
-    return all_ok;
-}
-
-// Internal: write `rel material:binding = [target_path]` to ONE mesh.
-// Relationships in USD are array-typed (a mesh can bind multiple
-// materials), but we always write a 1-element list. PATH_STRING
-// semantic = ovx_string_t entries, kDLUInt 128, is_array=true.
-static bool write_material_binding_one(ovrtx_renderer_t* renderer,
-                                       const std::string& mesh_path,
-                                       const std::string& target_path) {
-    ovx_string_t pp = {mesh_path.c_str(), mesh_path.size()};
-    ovrtx_prim_list_t prim_list{};
-    prim_list.prim_paths = &pp;
-    prim_list.num_paths = 1;
-
-    ovrtx_attribute_type_t at{};
-    at.dtype = {kDLUInt, 128, 1};
-    at.is_array = true;                                 // array relationship
-    at.semantic = OVRTX_SEMANTIC_PATH_STRING;
-
-    ovrtx_binding_desc_t b{};
-    b.prim_list = prim_list;
-    b.attribute_name.string = {"material:binding",
-                               std::strlen("material:binding")};
-    b.attribute_type = at;
-    b.prim_mode = OVRTX_BINDING_PRIM_MODE_EXISTING_ONLY;
-    b.flags = OVRTX_BINDING_FLAG_NONE;
-
-    ovrtx_binding_desc_or_handle_t boh{};
-    boh.binding_desc = b;
-
-    // ONE-element path array. The ovx_string_t is the relationship's
-    // target prim path.
-    ovx_string_t target = {target_path.c_str(), target_path.size()};
-
-    DLTensor t{};
-    t.data = &target;
-    t.device = {kDLCPU, 0};
-    t.ndim = 1;
-    int64_t shape[1] = {1};                              // array length 1
-    t.shape = shape;
-    t.dtype = {kDLUInt, 128, 1};
-
-    ovrtx_input_buffer_t in_buf{};
-    in_buf.tensors = &t;
-    in_buf.tensor_count = 1;
-
-    auto wr = ovrtx_write_attribute(renderer, &boh, &in_buf,
-                                    OVRTX_DATA_ACCESS_SYNC);
-    return !check(wr, "material:binding");
-}
-
-bool apply_material_rebind(ovrtx_renderer_t* renderer,
-                           const std::vector<std::string>& mesh_paths,
-                           const std::string& target_material_path) {
-    bool all_ok = true;
-    for (const auto& mp : mesh_paths) {
-        if (!write_material_binding_one(renderer, mp, target_material_path))
-            all_ok = false;
-    }
-    return all_ok;
-}
-
-bool apply_material_restore(ovrtx_renderer_t* renderer,
-                            const std::vector<std::string>& mesh_paths,
-                            const std::vector<std::string>& original_material_paths) {
-    if (mesh_paths.size() != original_material_paths.size()) return false;
-    bool all_ok = true;
-    for (std::size_t i = 0; i < mesh_paths.size(); ++i) {
-        // Empty original = mesh had no MDL surface to begin with;
-        // skip those (we never rebound them anyway).
-        if (original_material_paths[i].empty()) continue;
-        if (!write_material_binding_one(renderer, mesh_paths[i],
-                                        original_material_paths[i]))
-            all_ok = false;
-    }
-    return all_ok;
-}
+// (Slider-batched helpers — write_inline_broadcast, apply_global_xray_neon,
+//  apply_visibility, write_material_binding_one, apply_material_rebind,
+//  apply_material_restore — were removed during back-to-basics debug
+//  cleanup. See git history at f75892c if you need them back.)
 
 ShaderOverride::Mode mode_from_string(const std::string& s) {
     if (s == "neon")       return ShaderOverride::Mode::Neon;

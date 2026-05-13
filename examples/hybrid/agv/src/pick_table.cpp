@@ -12,7 +12,7 @@ namespace agv {
 namespace {
 constexpr std::uint32_t kMagic       = 0x50564741;  // "AGVP"
 constexpr std::uint32_t kVersionMin  = 1;
-constexpr std::uint32_t kVersionMax  = 2;
+constexpr std::uint32_t kVersionMax  = 3;
 
 // Read N bytes into `dst` or return false. We never trust the file's
 // claimed sizes: every read is bounded and checked.
@@ -64,8 +64,10 @@ std::vector<PickEntry> load_pick_table(const std::string& bin_path) {
         return entries;
     }
     const bool has_material_name = (version >= 2);
+    const bool has_triangles     = (version >= 3);
 
     entries.reserve(mesh_count);
+    std::size_t total_tris = 0;
     for (std::uint32_t i = 0; i < mesh_count; ++i) {
         PickEntry e;
         if (!read_len_string(in, e.mesh_path) ||
@@ -86,11 +88,35 @@ std::vector<PickEntry> load_pick_table(const std::string& bin_path) {
             std::fprintf(stderr, "[picks] truncated at entry %u (geom)\n", i);
             return entries;
         }
+        if (has_triangles) {
+            std::uint32_t tri_count = 0;
+            if (!read_pod(in, tri_count)) {
+                std::fprintf(stderr,
+                    "[picks] truncated at entry %u (tri_count)\n", i);
+                return entries;
+            }
+            // Bulk read each of v0/v1/v2 — much faster than tri-by-tri
+            // for the building scene's hundreds of thousands of tris.
+            e.v0.resize(tri_count);
+            e.v1.resize(tri_count);
+            e.v2.resize(tri_count);
+            const std::size_t bytes = tri_count * sizeof(float) * 3;
+            if (tri_count > 0) {
+                if (!read_exact(in, e.v0.data(), bytes) ||
+                    !read_exact(in, e.v1.data(), bytes) ||
+                    !read_exact(in, e.v2.data(), bytes)) {
+                    std::fprintf(stderr,
+                        "[picks] truncated at entry %u (tri data)\n", i);
+                    return entries;
+                }
+            }
+            total_tris += tri_count;
+        }
         entries.push_back(std::move(e));
     }
     std::fprintf(stderr,
-                 "[picks] loaded %zu meshes from %s (v%u)\n",
-                 entries.size(), bin_path.c_str(), version);
+                 "[picks] loaded %zu meshes (%zu triangles) from %s (v%u)\n",
+                 entries.size(), total_tris, bin_path.c_str(), version);
     return entries;
 }
 // [/snippet:pick-table-load]

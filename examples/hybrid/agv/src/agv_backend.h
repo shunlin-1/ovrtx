@@ -22,38 +22,23 @@ class FrameImageProvider;
 class MaterialOverrides;
 
 // QObject exposed to QML as `agvBackend`. Owns the ovrtx renderer +
-// worker thread. UI thread calls orbit()/zoom(); worker thread drives
-// ovrtx_step and pushes frames into FrameImageProvider.
+// worker thread. UI thread calls orbit()/zoom()/pick(); worker thread
+// drives ovrtx_step and pushes frames into FrameImageProvider.
 //
-// Property frameCounter bumps on every rendered frame — QML binds the
-// Image source to "image://agv/frame/" + frameCounter so the provider
-// is re-queried each time.
+// Stripped back to the minimum viable surface for debugging the
+// per-mesh material toggle path (Neon / Xray / Xray-Light buttons).
+// Slider-driven features (global X-ray Neon, Y-clip, section clip)
+// were removed; see git history for the previous WIP if you want
+// them back.
 class AgvBackend : public QObject {
     Q_OBJECT
     Q_PROPERTY(int frameCounter READ frameCounter NOTIFY frameChanged)
     Q_PROPERTY(QString pickMode READ pickMode WRITE setPickMode NOTIFY pickModeChanged)
 
-    // Global "X-ray Neon" slider (0..1). One value drives all unique
-    // materials' opacity_constant + emissive_intensity simultaneously.
-    Q_PROPERTY(double buildingXrayNeon READ buildingXrayNeon
-               WRITE setBuildingXrayNeon NOTIFY buildingXrayNeonChanged)
-
-    // Y-axis clipping slider — hides meshes above a world-Y threshold.
-    Q_PROPERTY(double yClipValue READ yClipValue
-               WRITE setYClipValue NOTIFY yClipValueChanged)
-    Q_PROPERTY(double yClipMin READ yClipMin CONSTANT)
-    Q_PROPERTY(double yClipMax READ yClipMax CONSTANT)
-
     // Last picked mesh's human-readable material name — surfaced in QML
     // as a HUD tag so the user can see which material a click landed on.
     Q_PROPERTY(QString lastPickedMaterial READ lastPickedMaterial
                NOTIFY lastPickedMaterialChanged)
-
-    // True per-fragment "section clip" mode. When enabled, every mesh
-    // is rebound to the custom MDL clip material and the Y-clip slider
-    // drives `inputs:cut_height_y` instead of the per-mesh visibility.
-    Q_PROPERTY(bool sectionClipEnabled READ sectionClipEnabled
-               WRITE setSectionClipEnabled NOTIFY sectionClipEnabledChanged)
 
 public:
     AgvBackend(FrameImageProvider* provider,
@@ -66,12 +51,6 @@ public:
 
     int frameCounter() const { return frame_counter_.load(); }
     QString pickMode() const;
-
-    double buildingXrayNeon() const { return building_xray_neon_.load(); }
-    double yClipValue() const       { return y_clip_value_.load(); }
-    double yClipMin() const         { return y_clip_min_; }
-    double yClipMax() const         { return y_clip_max_; }
-    bool   sectionClipEnabled() const { return section_clip_enabled_.load(); }
     QString lastPickedMaterial() const;
 
     void stop();
@@ -84,29 +63,10 @@ public slots:
     void pick(double x_frac, double y_frac);
     void setPickMode(const QString& mode);
 
-    // Global "X-ray Neon" — single value in [0..1].
-    // 0 = original look, 1 = full holographic cyan x-ray on every material.
-    void setBuildingXrayNeon(double v);
-
-    // Y-axis clip slider — world-Y threshold. When section clip is
-    // OFF, drives per-mesh `visibility` toggling (the predicate at
-    // should_hide_at_y_clip decides which meshes hide). When section
-    // clip is ON, drives `inputs:cut_height_y` on the custom MDL clip
-    // material for true per-fragment world-Y discard.
-    void setYClipValue(double v);
-
-    // Toggle the section-clip mode. ON rebinds every mesh to the
-    // /AgvLooks/SectionClip material declared in the runtime overlay,
-    // OFF restores the original Material prim bindings.
-    void setSectionClipEnabled(bool enabled);
-
 signals:
     void frameChanged(int counter);
     void pickModeChanged();
-    void buildingXrayNeonChanged();
-    void yClipValueChanged();
     void lastPickedMaterialChanged();
-    void sectionClipEnabledChanged();
 
 private:
     void runWorker();   // ovrtx render loop
@@ -135,22 +95,6 @@ private:
     // and never mutated again — safe to read from the worker without
     // a lock as long as the ctor populated it before the worker started.
     std::vector<PickEntry> pick_table_;
-
-    // Aggregate scene Y-range, computed from pick_table_ once.
-    // QML uses these to set the Y-clip slider's min/max.
-    double y_clip_min_ = 0.0;
-    double y_clip_max_ = 0.0;
-
-    // Slider values — atomic so QML thread can write while worker reads.
-    // Worker checks `*_dirty_` flags to know when to apply changes.
-    std::atomic<double> building_xray_neon_{0.0};
-    std::atomic<bool>   xray_neon_dirty_{false};
-    std::atomic<double> y_clip_value_{0.0};
-    std::atomic<bool>   y_clip_dirty_{false};
-
-    // Section clip (true per-fragment cut via custom MDL).
-    std::atomic<bool>   section_clip_enabled_{false};
-    std::atomic<bool>   section_clip_dirty_{false};
 
     // Last picked mesh's material name — written by the worker on hit,
     // read by QML for HUD display. Guarded by picks_mutex_.

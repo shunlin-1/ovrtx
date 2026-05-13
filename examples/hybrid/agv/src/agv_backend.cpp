@@ -16,9 +16,7 @@
 #include <cstring>
 #include <cstdio>
 #include <limits>
-#include <set>
 #include <string_view>
-#include <unordered_map>
 
 namespace agv {
 
@@ -48,6 +46,54 @@ constexpr double kVerticalAperture   = 11.787;
 // Slab method ray-AABB intersection. Returns t > 0 along the ray if
 // hit, else infinity. `dir` need not be normalised — t is in units of
 // |dir|. Mirrors ray_aabb() in examples/python/agv/main.py.
+// Möller-Trumbore ray-triangle test. Returns the minimum t > EPS where
+// the ray hits any of the N triangles in the parallel V0/V1/V2 arrays,
+// or +inf if no hit. `dir` need not be normalised — `t` is in units
+// of |dir|. Same algorithm as examples/python/agv/main.py:ray_triangles_min_t.
+double ray_triangles_min_t(const double eye[3], const double dir[3],
+                           const std::vector<std::array<float, 3>>& V0,
+                           const std::vector<std::array<float, 3>>& V1,
+                           const std::vector<std::array<float, 3>>& V2) {
+    constexpr double kEps = 1e-7;
+    double best_t = std::numeric_limits<double>::infinity();
+    const std::size_t n = V0.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        // edge1 = V1 - V0,   edge2 = V2 - V0
+        const double e1x = V1[i][0] - V0[i][0];
+        const double e1y = V1[i][1] - V0[i][1];
+        const double e1z = V1[i][2] - V0[i][2];
+        const double e2x = V2[i][0] - V0[i][0];
+        const double e2y = V2[i][1] - V0[i][1];
+        const double e2z = V2[i][2] - V0[i][2];
+        // h = cross(dir, edge2)
+        const double hx = dir[1]*e2z - dir[2]*e2y;
+        const double hy = dir[2]*e2x - dir[0]*e2z;
+        const double hz = dir[0]*e2y - dir[1]*e2x;
+        // a = dot(edge1, h) — parallel ray rejected on near-zero a.
+        const double a = e1x*hx + e1y*hy + e1z*hz;
+        if (std::fabs(a) < kEps) continue;
+        const double f = 1.0 / a;
+        // s = eye - V0
+        const double sx = eye[0] - V0[i][0];
+        const double sy = eye[1] - V0[i][1];
+        const double sz = eye[2] - V0[i][2];
+        // u = f * dot(s, h)
+        const double u = f * (sx*hx + sy*hy + sz*hz);
+        if (u < 0.0 || u > 1.0) continue;
+        // q = cross(s, edge1)
+        const double qx = sy*e1z - sz*e1y;
+        const double qy = sz*e1x - sx*e1z;
+        const double qz = sx*e1y - sy*e1x;
+        // v = f * dot(dir, q)
+        const double v = f * (dir[0]*qx + dir[1]*qy + dir[2]*qz);
+        if (v < 0.0 || u + v > 1.0) continue;
+        // t = f * dot(edge2, q)
+        const double t = f * (e2x*qx + e2y*qy + e2z*qz);
+        if (t > kEps && t < best_t) best_t = t;
+    }
+    return best_t;
+}
+
 double ray_aabb(const double eye[3], const double dir[3],
                 const std::array<double, 3>& bb_min,
                 const std::array<double, 3>& bb_max) {
@@ -69,28 +115,60 @@ double ray_aabb(const double eye[3], const double dir[3],
     return tmin > 0.0 ? tmin : tmax;
 }
 
-// Y-clip predicate — given a mesh's AABB and the slider's Y, return
-// `true` if the mesh should be HIDDEN. Tune to taste:
+// [snippet:fk-write-omni-xform]
+// Write a row-major 4x4 transform to `prim_path` via ovrtx_write_attribute
+// using the same dtype / semantic as the camera write. Returns true on
+// success, false on any error — does NOT print to stderr, so the caller
+// can probe whether a prim exists (silent miss) and decide what to do.
 //
-//   Option A — Hide stuff *entirely above* the cut (generous reveal,
-//              meshes that straddle the cut stay visible):
-//                  return entry.bb_min[1] > clip_y;
-//
-//   Option B (current) — Hide anything that *pokes above* the cut
-//              (clean cross-section: only meshes entirely below the
-//              cut survive, straddlers also hide). Closest we can get
-//              to a horizontal "slice" without per-fragment clipping,
-//              which ovrtx 0.2.0 doesn't expose.
-//                  return entry.bb_max[1] > clip_y;
-//
-//   Option C — Hide by mesh centre (smooth fade across slider):
-//                  return (entry.bb_min[1] + entry.bb_max[1]) * 0.5 > clip_y;
-bool should_hide_at_y_clip(const PickEntry& entry, double clip_y) {
-    // Option C — mesh CENTRE above cut. Smoothest transition because
-    // centres are spread across the scene more evenly than extremes,
-    // so the slider transitions feel gradual rather than stepped.
-    return (entry.bb_min[1] + entry.bb_max[1]) * 0.5 > clip_y;
+// Used by the per-frame kinematic-arm FK driver to drive
+// /World/KinematicArm/link_1 + link_2 from a sine wave. Same C API path
+// the camera uses, just targeting `omni:xform` on a different prim.
+bool try_write_omni_xform(ovrtx_renderer_t* renderer,
+                          const char* prim_path,
+                          std::array<double, 16>& m) {
+    ovx_string_t p = {prim_path, std::strlen(prim_path)};
+    ovrtx_prim_list_t list{};
+    list.prim_paths = &p;
+    list.num_paths = 1;
+
+    ovrtx_attribute_type_t at{};
+    at.dtype = {kDLFloat, 64, 16};       // mat4d packed into 16 lanes
+    at.is_array = false;
+    at.semantic = OVRTX_SEMANTIC_XFORM_MAT4x4;
+
+    ovrtx_binding_desc_t bd{};
+    bd.prim_list = list;
+    bd.attribute_name.string = {"omni:xform", 10};
+    bd.attribute_type = at;
+    // EXISTING_ONLY ⇒ ovrtx returns an error instead of creating the
+    // prim if it isn't already in the stage. That's exactly the probe
+    // semantics we want: scenes without a KinematicArm (Test.usda,
+    // 桂蘭樓_merge.usda) fail this call, we set fk_present = false,
+    // and we never write again.
+    bd.prim_mode = OVRTX_BINDING_PRIM_MODE_EXISTING_ONLY;
+    bd.flags = OVRTX_BINDING_FLAG_NONE;
+
+    ovrtx_binding_desc_or_handle_t boh{};
+    boh.binding_desc = bd;
+
+    DLTensor t{};
+    t.data = m.data();
+    t.device = {kDLCPU, 0};
+    t.ndim = 1;
+    int64_t shape[1] = {1};
+    t.shape = shape;
+    t.dtype = {kDLFloat, 64, 16};
+
+    ovrtx_input_buffer_t buf{};
+    buf.tensors = &t;
+    buf.tensor_count = 1;
+
+    auto wr = ovrtx_write_attribute(renderer, &boh, &buf,
+                                    OVRTX_DATA_ACCESS_SYNC);
+    return wr.status != OVRTX_API_ERROR;
 }
+// [/snippet:fk-write-omni-xform]
 
 ovrtx_rendered_output_handle_t find_ldr_color(
     ovrtx_render_product_set_outputs_t const& outputs) {
@@ -126,14 +204,10 @@ AgvBackend::AgvBackend(FrameImageProvider* provider,
       camera_(initial_distance, /*az=*/0.610865, /*el=*/0.349066, up_axis),
       pick_table_(std::move(pick_table)) {
     // Compute the aggregate world-space bbox from the pick table so we
-    // can (a) feed Y range to the Y-clip slider and (b) reframe the
-    // orbit camera onto the actual scene center with a sensible initial
-    // distance — instead of the heuristic 5/mpu in main.cpp which fails
-    // for off-origin or unusually-sized assets.
-    if (pick_table_.empty()) {
-        y_clip_min_ = 0.0;
-        y_clip_max_ = 1.0;
-    } else {
+    // can reframe the orbit camera onto the actual scene center with a
+    // sensible initial distance — instead of the heuristic 5/mpu in
+    // main.cpp which fails for off-origin or unusually-sized assets.
+    if (!pick_table_.empty()) {
         double scene_min[3] = { std::numeric_limits<double>::infinity(),
                                 std::numeric_limits<double>::infinity(),
                                 std::numeric_limits<double>::infinity() };
@@ -146,13 +220,11 @@ AgvBackend::AgvBackend(FrameImageProvider* provider,
                 scene_max[i] = std::max(scene_max[i], pe.bb_max[i]);
             }
         }
-        y_clip_min_ = scene_min[1];
-        y_clip_max_ = scene_max[1];
 
         // Scene-bbox auto-frame: focus on center, distance ≈ 1.6× the
         // largest extent so the whole scene fits in a 60°-FOV viewport
         // with comfortable headroom. Zoom limits scale with the scene
-        // so the slider works for cm AGVs and meter buildings alike.
+        // so the wheel works for cm AGVs and meter buildings alike.
         const double cx = 0.5 * (scene_min[0] + scene_max[0]);
         const double cy = 0.5 * (scene_min[1] + scene_max[1]);
         const double cz = 0.5 * (scene_min[2] + scene_max[2]);
@@ -172,8 +244,6 @@ AgvBackend::AgvBackend(FrameImageProvider* provider,
             cx, cy, cz, max_extent,
             init_distance, init_distance * 0.01, init_distance * 50.0);
     }
-    // Default Y-clip = top of scene → nothing clipped initially.
-    y_clip_value_.store(y_clip_max_);
 
     // pick_table_ is fully populated before the worker starts, so the
     // worker can read it lock-free for the rest of its lifetime.
@@ -185,34 +255,6 @@ QString AgvBackend::lastPickedMaterial() const {
     return last_picked_material_;
 }
 
-void AgvBackend::setBuildingXrayNeon(double v) {
-    v = std::clamp(v, 0.0, 1.0);
-    if (v == building_xray_neon_.load()) return;
-    building_xray_neon_.store(v);
-    xray_neon_dirty_.store(true);
-    emit buildingXrayNeonChanged();
-}
-
-void AgvBackend::setYClipValue(double v) {
-    if (v == y_clip_value_.load()) return;
-    y_clip_value_.store(v);
-    y_clip_dirty_.store(true);
-    emit yClipValueChanged();
-}
-
-void AgvBackend::setSectionClipEnabled(bool enabled) {
-    if (enabled == section_clip_enabled_.load()) return;
-    section_clip_enabled_.store(enabled);
-    section_clip_dirty_.store(true);
-    // When entering section mode, also mark Y-clip dirty so the worker
-    // writes the current slider value into cut_height_y immediately
-    // (otherwise the clip material's default 1e6 leaves everything
-    // visible until the slider next moves).
-    y_clip_dirty_.store(true);
-    emit sectionClipEnabledChanged();
-    std::fprintf(stderr, "[backend] section clip -> %s\n",
-                 enabled ? "ON" : "OFF");
-}
 
 AgvBackend::~AgvBackend() { stop(); }
 
@@ -389,87 +431,13 @@ def "Render"
     }
 #endif
 
-    // ── Inject the environment as a runtime overlay layer ──────────
-    // The current sidecar drops Test.usda's /Environment via the
-    // defaultPrim filter, and 桂蘭樓_merge.usda has no environment at
-    // all. We add a self-contained one here as inline USDA — no
-    // on-disk file, no source-asset edits, NO network dependencies.
-    //
-    // Two lights:
-    //   • DomeLight "Sky"  — flat sky-blue tint, IBL ambient
-    //   • DistantLight "Sun" — directional shadows, sunlight tint
-    //
-    // To upgrade to a fancy HDR sky later, swap the DomeLight body for:
-    //     def Xform "Sky" (
-    //         prepend references = @https://omniverse-content-production.s3.us-west-2.amazonaws.com/Environments/2024_1/DomeLights/Dynamic/CumulusHeavy.usd@
-    //     ) {}
-    // — requires network access to NVIDIA's content S3 bucket on first run.
-    {
-        // Builds /AgvEnvironment (DomeLight + DistantLight) AND
-        // /AgvLooks/SectionClip (custom MDL material for per-fragment
-        // world-Y cross-section clipping). The .mdl asset path is
-        // baked at compile time via AGV_MDL_DIR.
-        std::string env_usda;
-        env_usda.reserve(2048);
-        env_usda += "#usda 1.0\n";
-        env_usda += "(\n";
-        env_usda += "    defaultPrim = \"AgvEnvironment\"\n";
-        env_usda += ")\n\n";
-        env_usda += "def Xform \"AgvEnvironment\"\n";
-        env_usda += "{\n";
-        env_usda += "    def DomeLight \"Sky\"\n";
-        env_usda += "    {\n";
-        env_usda += "        color3f inputs:color = (0.55, 0.70, 0.95)\n";
-        env_usda += "        float inputs:intensity = 600\n";
-        env_usda += "    }\n";
-        env_usda += "    def DistantLight \"Sun\"\n";
-        env_usda += "    {\n";
-        env_usda += "        float inputs:angle = 0.53\n";
-        env_usda += "        color3f inputs:color = (1.0, 0.97, 0.88)\n";
-        env_usda += "        float inputs:intensity = 4\n";
-        env_usda += "        float3 xformOp:rotateXYZ = (-45, 0, 30)\n";
-        env_usda += "        uniform token[] xformOpOrder = [\"xformOp:rotateXYZ\"]\n";
-        env_usda += "    }\n";
-        env_usda += "}\n\n";
-        // Custom MDL material for the per-fragment clipping mode.
-        env_usda += "def \"AgvLooks\"\n";
-        env_usda += "{\n";
-        env_usda += "    def Material \"SectionClip\"\n";
-        env_usda += "    {\n";
-        env_usda += "        token outputs:mdl:surface.connect = "
-                    "</AgvLooks/SectionClip/Shader.outputs:out>\n";
-        env_usda += "        def Shader \"Shader\"\n";
-        env_usda += "        {\n";
-        env_usda += "            uniform token info:implementationSource = \"sourceAsset\"\n";
-        env_usda += "            uniform asset info:mdl:sourceAsset = @";
-        env_usda +=             AGV_MDL_DIR;
-        env_usda +=             "/agv_section.mdl@\n";
-        env_usda += "            uniform token info:mdl:sourceAsset:subIdentifier = \"AgvSection\"\n";
-        env_usda += "            color3f inputs:section_color = (0.78, 0.85, 0.92)\n";
-        env_usda += "            float  inputs:cut_height_y = 1000000.0\n";
-        env_usda += "            color3f inputs:rim_color = (0.30, 0.85, 1.00)\n";
-        env_usda += "            float  inputs:rim_intensity = 200.0\n";
-        env_usda += "        }\n";
-        env_usda += "    }\n";
-        env_usda += "}\n";
-
-        ovrtx_usd_input_t env_in{};
-        env_in.usd_layer_content = {env_usda.c_str(), env_usda.size()};
-        ovrtx_usd_handle_t env_handle{};
-        auto env_enq = ovrtx_add_usd(renderer, env_in,
-                                     {"", 0}, &env_handle);
-        if (!check_ovrtx(env_enq, "add_usd(environment)")) {
-            while (ovrtx_wait_op(renderer, env_enq.op_index,
-                                 ovrtx_timeout_t{0}, &wait).status
-                    == OVRTX_API_TIMEOUT) {
-                if (stop_requested_.load()) {
-                    ovrtx_destroy_renderer(renderer); return;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            std::fprintf(stderr, "[backend] environment loaded (DomeLight + Sun)\n");
-        }
-    }
+    // (Environment overlay removed — Test.usda's CloudySky already
+    // supplies DistantLight + DomeLight + SkyMaterial; injecting our
+    // own /AgvEnvironment on top of it was double-counting and made
+    // the scene over-bright. Scenes WITHOUT an authored sky — like
+    // bare-bones 桂蘭樓_merge.usda — will look unlit. If you need a
+    // fallback dome there, add a `--env` CLI flag that picks one of
+    // a few preset USDA strings to inject, instead of always doing it.)
 
     // Camera-write descriptor — built once, reused every dirty frame.
     // Matches the top-level /AgvCamera path declared in the inline overlay.
@@ -508,52 +476,42 @@ def "Render"
     // constructed inline per write. Cheap to keep local to the worker.
     MaterialOverrides materials(renderer);
 
-    // ── Pre-compute slider data ─────────────────────────────────────
-    // Unique shader paths + parallel original color/intensity for the
-    // X-ray Neon batched writes. Computed once; the data lives for the
-    // worker's lifetime.
-    std::vector<std::string>              unique_shader_paths;
-    std::vector<std::array<float, 3>>     unique_orig_colors;
-    std::vector<float>                    unique_orig_intensities;
+    // [snippet:fk-probe]
+    // Kinematic-arm FK driver. Probes once: if /World/KinematicArm/link_1
+    // exists, we drive it (and link_2) every frame; otherwise we never
+    // touch it again. Designed so the AGV scenes (no kinematic arm) get
+    // zero overhead and zero stderr spam, while joint_example.usda picks
+    // up live animation with no per-scene config flag.
+    //
+    // The probe write puts link_1 at its authored identity pose (worldZ
+    // rotation = 0, world translate = (2, 0.5, 0)). On joint_example.usda
+    // this is a no-op visually; on scenes without the prim it returns
+    // false and we disable the driver.
+    bool fk_present = false;
     {
-        std::unordered_map<std::string, std::size_t> seen;
-        for (const auto& pe : pick_table_) {
-            if (seen.emplace(pe.shader_path, unique_shader_paths.size()).second) {
-                unique_shader_paths.push_back(pe.shader_path);
-                unique_orig_colors.push_back(pe.orig_color);
-                unique_orig_intensities.push_back(pe.orig_intensity);
-            }
+        std::array<double, 16> identity_pose = {
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            2, 0.5, 0, 1
+        };
+        fk_present = try_write_omni_xform(
+            renderer, "/World/KinematicArm/link_1", identity_pose);
+        if (fk_present) {
+            std::fprintf(stderr,
+                "[backend] FK driver enabled "
+                "(/World/KinematicArm/link_1 found)\n");
+        } else {
+            // Probe failed — clear the last-error slot so the next
+            // legitimate failure isn't ambiguously reported.
+            ovrtx_get_last_error();
+            std::fprintf(stderr,
+                "[backend] FK driver disabled "
+                "(no KinematicArm in this scene)\n");
         }
-        std::fprintf(stderr,
-            "[backend] %zu meshes / %zu unique shaders -> slider targets %zu materials\n",
-            pick_table_.size(), unique_shader_paths.size(),
-            unique_shader_paths.size());
     }
-
-    // Per-mesh Y-clip state. Tracks whether each mesh is currently hidden
-    // so we only write deltas (avoid spamming ovrtx every slider tick).
-    std::vector<bool> y_clip_hidden(pick_table_.size(), false);
-
-    // Section-clip auxiliary tables: parallel arrays for the rebind
-    // path. Original material path = parent of the shader_path (the
-    // Material prim that owns the shader). Meshes whose shader_path
-    // is empty (no MDL surface) are skipped from rebinding.
-    std::vector<std::string> rebindable_mesh_paths;
-    std::vector<std::string> original_material_paths;
-    for (const auto& pe : pick_table_) {
-        if (pe.shader_path.empty()) continue;
-        const auto pos = pe.shader_path.find_last_of('/');
-        if (pos == std::string::npos) continue;
-        rebindable_mesh_paths.push_back(pe.mesh_path);
-        original_material_paths.push_back(pe.shader_path.substr(0, pos));
-    }
-    std::fprintf(stderr,
-        "[backend] %zu meshes eligible for section-clip rebind\n",
-        rebindable_mesh_paths.size());
-
-    static const std::string kSectionMaterialPath = "/AgvLooks/SectionClip";
-    static const std::string kSectionShaderPath   =
-        "/AgvLooks/SectionClip/Shader";
+    const auto fk_start = std::chrono::steady_clock::now();
+    // [/snippet:fk-probe]
 
     auto last_tick = std::chrono::steady_clock::now();
 
@@ -589,97 +547,6 @@ def "Render"
             auto wr = ovrtx_write_attribute(renderer, &binding_or_handle,
                                             &in_buf, OVRTX_DATA_ACCESS_SYNC);
             if (check_ovrtx(wr, "write_attribute(camera)")) break;
-        }
-
-        // ── X-ray Neon slider: batched write to all unique shaders ──
-        if (xray_neon_dirty_.exchange(false)) {
-            double v = building_xray_neon_.load();
-            apply_global_xray_neon(renderer,
-                                   unique_shader_paths,
-                                   unique_orig_colors,
-                                   unique_orig_intensities,
-                                   v);
-        }
-
-        // ── Section-clip toggle: rebind every mesh's material ───────
-        if (section_clip_dirty_.exchange(false)) {
-            const bool on = section_clip_enabled_.load();
-            if (on) {
-                // First, undo any per-mesh visibility hiding from the
-                // alternate Y-clip mode so the section material has a
-                // visible mesh to render on.
-                std::vector<std::string> all_visible_paths;
-                std::vector<bool>        all_visible_flag;
-                for (std::size_t i = 0; i < pick_table_.size(); ++i) {
-                    if (y_clip_hidden[i]) {
-                        all_visible_paths.push_back(pick_table_[i].mesh_path);
-                        all_visible_flag.push_back(false);  // -> inherited
-                        y_clip_hidden[i] = false;
-                    }
-                }
-                if (!all_visible_paths.empty()) {
-                    apply_visibility(renderer, all_visible_paths,
-                                     all_visible_flag);
-                }
-                apply_material_rebind(renderer, rebindable_mesh_paths,
-                                      kSectionMaterialPath);
-            } else {
-                apply_material_restore(renderer, rebindable_mesh_paths,
-                                       original_material_paths);
-            }
-        }
-
-        // ── Y-clip slider: mode-dispatched ──────────────────────────
-        //   Section clip ON  → write cut_height_y to the clip Shader.
-        //   Section clip OFF → toggle per-mesh visibility (old path).
-        if (y_clip_dirty_.exchange(false)) {
-            const double clip_y = y_clip_value_.load();
-            if (section_clip_enabled_.load()) {
-                float ch = static_cast<float>(clip_y);
-                // Direct attribute write — one ovrtx call per slider tick.
-                ovx_string_t pp = {kSectionShaderPath.c_str(),
-                                   kSectionShaderPath.size()};
-                ovrtx_prim_list_t pl{};
-                pl.prim_paths = &pp; pl.num_paths = 1;
-                ovrtx_attribute_type_t at{};
-                at.dtype = {kDLFloat, 32, 1};
-                at.is_array = false;
-                ovrtx_binding_desc_t b{};
-                b.prim_list = pl;
-                b.attribute_name.string = {"inputs:cut_height_y", 19};
-                b.attribute_type = at;
-                b.prim_mode = OVRTX_BINDING_PRIM_MODE_EXISTING_ONLY;
-                b.flags = OVRTX_BINDING_FLAG_NONE;
-                ovrtx_binding_desc_or_handle_t boh{};
-                boh.binding_desc = b;
-                DLTensor t{};
-                t.data = &ch;
-                t.device = {kDLCPU, 0};
-                t.ndim = 1;
-                int64_t shape[1] = {1};
-                t.shape = shape;
-                t.dtype = {kDLFloat, 32, 1};
-                ovrtx_input_buffer_t in_buf{};
-                in_buf.tensors = &t;
-                in_buf.tensor_count = 1;
-                ovrtx_write_attribute(renderer, &boh, &in_buf,
-                                      OVRTX_DATA_ACCESS_SYNC);
-            } else {
-                std::vector<std::string> changed_paths;
-                std::vector<bool>        changed_hide;
-                for (std::size_t i = 0; i < pick_table_.size(); ++i) {
-                    const bool want_hidden =
-                        should_hide_at_y_clip(pick_table_[i], clip_y);
-                    if (want_hidden != y_clip_hidden[i]) {
-                        changed_paths.push_back(pick_table_[i].mesh_path);
-                        changed_hide.push_back(want_hidden);
-                        y_clip_hidden[i] = want_hidden;
-                    }
-                }
-                if (!changed_paths.empty()) {
-                    apply_visibility(renderer, changed_paths, changed_hide);
-                }
-            }
         }
 
         // ── Drain pending picks; hit-test against the pick table ────
@@ -732,11 +599,57 @@ def "Render"
                 if (n < 1e-9) continue;
                 world_dir[0] /= n; world_dir[1] /= n; world_dir[2] /= n;
 
+                // Two-phase pick:
+                //   1. AABB broadphase rejects meshes the ray doesn't
+                //      enter at all (cheap, ~one cmp per axis per mesh).
+                //   2. Ray-triangle narrowphase finds the actual closest
+                //      visible surface for meshes whose bbox the ray
+                //      did enter. This is what fixes the AGV's "always
+                //      hits Base_Structure (the enveloping inner frame)"
+                //      problem — the ray's AABB t for an enveloping box
+                //      is small but its TRIANGLE t is far (because the
+                //      ray exits the visible shell first).
                 double best_t = std::numeric_limits<double>::infinity();
                 const PickEntry* best = nullptr;
+                // Per-pick diagnostics: count AABB passes and triangle
+                // hits across all meshes. Prints only when no triangle
+                // hit is found, so successful picks stay quiet.
+                int aabb_hits = 0;
+                int tri_hits  = 0;
+                double sample_tbox_first = std::numeric_limits<double>::infinity();
+                const PickEntry* sample_pe_first = nullptr;
                 for (const auto& pe : pick_table_) {
-                    double t = ray_aabb(eye, world_dir, pe.bb_min, pe.bb_max);
-                    if (t < best_t) { best_t = t; best = &pe; }
+                    const double t_box =
+                        ray_aabb(eye, world_dir, pe.bb_min, pe.bb_max);
+                    if (!std::isfinite(t_box) || t_box >= best_t) continue;
+                    ++aabb_hits;
+                    if (sample_pe_first == nullptr) {
+                        sample_tbox_first = t_box;
+                        sample_pe_first   = &pe;
+                    }
+                    // Bbox passes broadphase; do exact ray-triangle.
+                    const double t_tri = ray_triangles_min_t(
+                        eye, world_dir, pe.v0, pe.v1, pe.v2);
+                    if (std::isfinite(t_tri)) ++tri_hits;
+                    if (t_tri < best_t) {
+                        best_t = t_tri;
+                        best   = &pe;
+                    }
+                }
+                if (best == nullptr) {
+                    std::fprintf(stderr,
+                        "[pick-debug] click=(%.3f, %.3f)  "
+                        "eye=(%.2f, %.2f, %.2f)  "
+                        "dir=(%.3f, %.3f, %.3f)  "
+                        "aabb_hits=%d  tri_hits=%d  "
+                        "first_aabb=%s t_box=%.2f tris=%zu\n",
+                        x_frac, y_frac,
+                        eye[0], eye[1], eye[2],
+                        world_dir[0], world_dir[1], world_dir[2],
+                        aabb_hits, tri_hits,
+                        sample_pe_first ? sample_pe_first->mesh_path.c_str() : "(none)",
+                        sample_tbox_first,
+                        sample_pe_first ? sample_pe_first->v0.size() : 0);
                 }
                 if (best == nullptr ||
                     !std::isfinite(best_t)) {
@@ -760,6 +673,48 @@ def "Render"
                 materials.apply(*best, mode);
             }
         }
+
+        // ── FK driver: animate /World/KinematicArm/link_1 + link_2 ─
+        // Forward-kinematic 2-link arm:
+        //   link_1 sits at world (2, 0.5, 0) and rotates around Z by a1.
+        //   link_2 follows the tip of link_1 at length L along link_1's
+        //   local +X axis, rotating Z by (a1 + a2) so the joint angle
+        //   is purely relative.
+        // Row-major layout matches USD's matrix4d (translation in row 3).
+        // [snippet:fk-driver]
+        if (fk_present) {
+            double t = std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - fk_start).count();
+            double a1 = std::sin(t * 0.5) * 0.6;   // ~±34° at 0.5 rad/s
+            double a2 = std::sin(t * 0.7) * 1.0;   // ~±57° at 0.7 rad/s
+            const double L = 1.2;                  // link_1 → link_2 length
+
+            double c1 = std::cos(a1), s1 = std::sin(a1);
+            std::array<double, 16> m1 = {
+                 c1, -s1, 0, 0,
+                 s1,  c1, 0, 0,
+                  0,   0, 1, 0,
+                  2, 0.5, 0, 1
+            };
+
+            double a12 = a1 + a2;
+            double c12 = std::cos(a12), s12 = std::sin(a12);
+            // World position of link_2 = link_1_pos + Rz(a1) * (L, 0, 0)
+            double tx2 = 2.0 + c1 * L;
+            double ty2 = 0.5 + s1 * L;
+            std::array<double, 16> m2 = {
+                c12, -s12, 0, 0,
+                s12,  c12, 0, 0,
+                  0,    0, 1, 0,
+                tx2,  ty2, 0, 1
+            };
+
+            try_write_omni_xform(renderer,
+                                 "/World/KinematicArm/link_1", m1);
+            try_write_omni_xform(renderer,
+                                 "/World/KinematicArm/link_2", m2);
+        }
+        // [/snippet:fk-driver]
 
         // ── Step + fetch ────────────────────────────────────────────
         ovrtx_step_result_handle_t step_h = 0;
