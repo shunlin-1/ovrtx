@@ -941,11 +941,13 @@ auto VulkanContext::_create_descriptor_set_layout() -> void {
     
     VK_CHECK(vkCreateDescriptorSetLayout(_device, &layout_info, nullptr, &_descriptor_set_layout));
     
-    // Push constant range for texture index
+    // Push constants are shared by the fullscreen pass (texture index) and the
+    // marquee overlay pass (rectangle + viewport size).
     VkPushConstantRange push_constant_range = {};
-    push_constant_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_constant_range.stageFlags =
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     push_constant_range.offset = 0;
-    push_constant_range.size = sizeof(uint32_t);  // texture_index
+    push_constant_range.size = sizeof(float) * 8;
     
     // Create pipeline layout with push constants
     VkPipelineLayoutCreateInfo pipeline_layout_info = {};
@@ -1128,4 +1130,3 @@ auto VulkanContext::swapchain_image(uint32_t index) const -> VkImage {
     }
     return _swapchain_images[index];
 }
-

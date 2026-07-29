@@ -13,24 +13,25 @@
 Animated planetary system demo using ovrtx Python bindings.
 
 Demonstrates:
-- Loading a USD scene and injecting additional geometry via add_usd_layer
+- Loading a USD scene and injecting additional geometry via add_usd_reference_from_string
 - Using bind_attribute/map_attribute for zero-copy transform updates
 - GPU-accelerated animation using Warp kernels
 - Hierarchical animation (orbit parent rotation + planet self-spin)
 
 Usage:
-    python anim_planet_system.py                    # CPU mode, streams to rerun.io
-    python anim_planet_system.py --gpu              # CUDA mode
-    python anim_planet_system.py --num-planets 500  # Scale test (1-1000)
-    python anim_planet_system.py --png              # Save frames to _output/
-    python anim_planet_system.py --no-rr            # Disable rerun.io streaming
-    python anim_planet_system.py --log              # Enable carb log file
+    python main.py                    # CPU mode, streams to rerun.io
+    python main.py --gpu              # CUDA mode
+    python main.py --num-planets 500  # Scale test (1-1000)
+    python main.py --png              # Save frames to _output/
+    python main.py --no-rr            # Disable rerun.io streaming
+    python main.py --log              # Enable carb log file
 """
 
 import argparse
 import math
 from pathlib import Path
 
+import numpy as np
 import warp as wp
 
 from ovrtx import Device, PrimMode, Renderer, RendererConfig
@@ -177,11 +178,11 @@ def run_animation(device: Device, num_planets: int, save_png: bool, enable_log: 
     print(f"Animation: {num_planets} planets, orbit={orbit_radius}, scale={planet_scale:.1f}")
 
     # 1. Load base scene (cube is our "sun")
-    renderer.add_usd(str(USD_SCENE))
+    renderer.open_usd(str(USD_SCENE))
 
     # 2. Inject orbit layer under /World/Cube (inherits cube's transform automatically)
     orbit_usda = generate_orbit_layer_usda(num_planets, orbit_radius, planet_scale)
-    renderer.add_usd_layer(orbit_usda, path_prefix="/World/Cube/Orbit")
+    renderer.add_usd_reference_from_string(orbit_usda, "/World/Cube/Orbit")
 
     # 3. Create SINGLE binding for all prims (1 orbit + N planets)
     all_prim_paths = ["/World/Cube/Orbit"] + [f"/World/Cube/Orbit/Planet_{i}" for i in range(num_planets)]
@@ -234,31 +235,31 @@ def run_animation(device: Device, num_planets: int, save_png: bool, enable_log: 
                 if "LdrColor" not in frame.render_vars:
                     continue
 
-                with frame.render_vars["LdrColor"].map(device=device) as mapping:
-                    np_array = wp.from_dlpack(mapping.tensor).numpy()
+                var = frame.render_vars["LdrColor"].map(device=device)
+                np_array = wp.from_dlpack(var).numpy()
 
-                    # Save/stream frame
-                    if save_png:
-                        Image.fromarray(np_array).save(OUTPUT_DIR / f"planetary_system_{rendered_frame_count:03d}.png")
-                        print(f"  Saved frame {rendered_frame_count} (sim step {sim_step}, t={sim_time:.3f}s)")
-                    if rr:
-                        rr.set_time("sim_time", duration=sim_time)
-                        rr.log("render/LdrColor", rr.Image(np_array))
+                # Save/stream frame
+                if save_png:
+                    Image.fromarray(np_array).save(OUTPUT_DIR / f"planetary_system_{rendered_frame_count:03d}.png")
+                    print(f"  Saved frame {rendered_frame_count} (sim step {sim_step}, t={sim_time:.3f}s)")
+                if rr:
+                    rr.set_time("sim_time", duration=sim_time)
+                    rr.log("render/LdrColor", rr.Image(np_array))
 
     print(f"Simulation: {NUM_SIM_STEPS} steps @ {SIM_HZ} Hz -> {rendered_frame_count} rendered frames @ 60 fps")
 
-    # 5. Cleanup - unbind (mapping already unmapped per-frame)
+    # 5. Cleanup - unbind
     system_binding.unbind()
 
     # 6. Save final state via debug dump
     products = renderer.step(render_products={"ovrtx_debug_dump_stage"}, delta_time=0.0)
     frame = products["ovrtx_debug_dump_stage"].frames[0]
-    with frame.render_vars["debug"].map(device=Device.CPU) as mapping:
-        dump = mapping.tensor.to_bytes().decode("utf-8")
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        (OUTPUT_DIR / f"planetary_system_final.usda").write_text(dump, encoding="utf-8")
+    var = frame.render_vars["debug"].map(device=Device.CPU)
+    dump = np.from_dlpack(var).tobytes().decode("utf-8")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUTPUT_DIR / f"planetary_system_final.usda").write_text(dump, encoding="utf-8")
 
-    print(f"✓ Animated {num_planets} planets on {device.name}: {NUM_SIM_STEPS} sim steps @ {SIM_HZ} Hz")
+    print(f"Animated {num_planets} planets on {device.name}: {NUM_SIM_STEPS} sim steps @ {SIM_HZ} Hz")
     if save_png:
         print(f"  Frames saved to: {OUTPUT_DIR}")
 
@@ -269,12 +270,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python anim_planet_system.py                    # CPU mode, streams to rerun.io
-  python anim_planet_system.py --log              # Enable carb log file
-  python anim_planet_system.py --gpu              # CUDA mode
-  python anim_planet_system.py --num-planets 500  # Scale test (1-1000)
-  python anim_planet_system.py --no-rr            # Disable rerun.io streaming
-  python anim_planet_system.py --png              # Save frames to _output/
+  python main.py                    # CPU mode, streams to rerun.io
+  python main.py --gpu              # CUDA mode
+  python main.py --num-planets 500  # Scale test (1-1000)
+  python main.py --png              # Save frames to _output/
+  python main.py --no-rr            # Disable rerun.io streaming
+  python main.py --log              # Enable carb log file
 
 To create a video from frames:
   ffmpeg -framerate 60 -i _output/planetary_system_%03d.png -c:v libx264 -pix_fmt yuv420p planet.mp4

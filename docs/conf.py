@@ -50,6 +50,7 @@ extensions = [
 breathe_projects = {"ovrtx": "_doxygen/xml"}
 breathe_default_project = "ovrtx"
 breathe_default_members = ("members", "undoc-members")
+breathe_domain_by_extension = {"h": "c"}
 
 # -- Options for sphinx-mdinclude (Markdown in docstrings) -------------------
 # Enable Markdown-to-RST conversion for docstrings
@@ -62,6 +63,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 suppress_warnings = [
     "autodoc.duplicate_object",  # Dataclass fields documented twice by autodoc
     "duplicate_declaration.cpp",  # Breathe generates duplicate typedef/enum declarations for C typedef patterns
+    "duplicate_declaration.c",  # Same, for C domain (breathe_domain_by_extension maps .h to C)
 ]
 # Note: The "Error in declarator" warning for ovrtx_renderer_config_value_t is due to
 # Sphinx's C++ domain not supporting anonymous unions. This is a cosmetic warning only;
@@ -118,11 +120,15 @@ html_static_path = ["_static"]
 html_css_files = [
     "css/custom.css",
 ]
+html_js_files = [
+    ("js/aov-images.js", {"defer": "defer"}),
+]
 
 # -- Options for intersphinx -------------------------------------------------
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
+    "ovstage": ("https://nvidia-omniverse.github.io/ovstage", None),
 }
 
 # -- Autosummary settings ----------------------------------------------------

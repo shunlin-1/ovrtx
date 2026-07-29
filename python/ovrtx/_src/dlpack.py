@@ -180,7 +180,7 @@ class DLDataType(ctypes.Structure):
         "float32": (DLDataTypeCode.kDLFloat, 32, 1),
         "float64": (DLDataTypeCode.kDLFloat, 64, 1),
         "bfloat16": (DLDataTypeCode.kDLBfloat, 16, 1),
-        # Multi-lane types (for images)
+        # Multi-lane vector types
         "uint8x4": (DLDataTypeCode.kDLUInt, 8, 4),
         "float32x4": (DLDataTypeCode.kDLFloat, 32, 4),
     }
@@ -235,7 +235,7 @@ class DLTensor(ctypes.Structure):
     ]
 
     @classmethod
-    def from_dlpack(cls, obj: Any) -> "DLTensor":
+    def from_dlpack(cls, obj: Any, stream: Optional[int] = None) -> "DLTensor":
         """Extract DLTensor from an object implementing the DLPack protocol.
 
         This is useful for passing numpy arrays or other DLPack-compatible objects
@@ -243,6 +243,11 @@ class DLTensor(ctypes.Structure):
 
         Args:
             obj: Object with __dlpack__() method (e.g., numpy array).
+            stream: CUDA stream handle to pass to the DLPack producer for synchronization.
+                When supplied and ``obj`` reports a CUDA device via ``__dlpack_device__``, the
+                producer is instructed to make this stream wait for any pending work on ``obj``
+                so the consumer can safely read the tensor on that stream. Ignored for CPU
+                tensors and for producers that don't advertise ``__dlpack_device__``.
 
         Returns:
             DLTensor with copied shape/strides (safe to use after capsule is freed).
@@ -259,8 +264,13 @@ class DLTensor(ctypes.Structure):
         if not hasattr(obj, "__dlpack__"):
             raise TypeError(f"Object of type {type(obj).__name__} does not support DLPack protocol")
 
-        # Get DLPack capsule from object (legacy protocol for broad compatibility)
-        capsule = obj.__dlpack__()
+        # Forward the consumer stream only for CUDA tensors (CPU __dlpack__ rejects stream args).
+        pass_stream = False
+        if stream is not None and hasattr(obj, "__dlpack_device__"):
+            device_type, _ = obj.__dlpack_device__()
+            pass_stream = device_type in (DLDeviceType.kDLCUDA, DLDeviceType.kDLCUDAManaged)
+
+        capsule = obj.__dlpack__(stream=stream) if pass_stream else obj.__dlpack__()
 
         # Extract pointer to DLManagedTensor from capsule
         ptr = PyCapsule_GetPointer(capsule, b"dltensor")
@@ -301,10 +311,8 @@ class DLTensor(ctypes.Structure):
         # Mark capsule as consumed per DLPack protocol (prevents double-consumption)
         PyCapsule_SetName(capsule, b"used_dltensor")
 
-        # Release the managed tensor descriptor. We've deep-copied shape/strides and
-        # keep the source object alive via _source_obj, so the descriptor is no longer
-        # needed. The deleter frees the DLManagedTensor struct and Py_DecRefs the
-        # producer's internal hold on the source object (our _source_obj ref keeps it alive).
+        # Release the managed tensor descriptor. capsule_destructor will no-op via name check
+        # when the consumed capsule is later GC'd (name is now "used_dltensor*").
         if managed.deleter:
             managed.deleter(ptr)
 
@@ -350,13 +358,13 @@ class DLManagedTensorVersioned(ctypes.Structure):
 
 
 # Python C API bindings for capsule protocol
-PyMem_RawMalloc = ctypes.pythonapi.PyMem_RawMalloc
-PyMem_RawMalloc.argtypes = [ctypes.c_size_t]
-PyMem_RawMalloc.restype = ctypes.c_void_p
+PyMem_Malloc = ctypes.pythonapi.PyMem_Malloc
+PyMem_Malloc.argtypes = [ctypes.c_size_t]
+PyMem_Malloc.restype = ctypes.c_void_p
 
-PyMem_RawFree = ctypes.pythonapi.PyMem_RawFree
-PyMem_RawFree.argtypes = [ctypes.c_void_p]
-PyMem_RawFree.restype = None
+PyMem_Free = ctypes.pythonapi.PyMem_Free
+PyMem_Free.argtypes = [ctypes.c_void_p]
+PyMem_Free.restype = None
 
 Py_IncRef = ctypes.pythonapi.Py_IncRef
 Py_IncRef.argtypes = [ctypes.py_object]
@@ -384,6 +392,36 @@ PyCapsule_SetName = ctypes.pythonapi.PyCapsule_SetName
 PyCapsule_SetName.argtypes = [ctypes.py_object, ctypes.c_char_p]
 PyCapsule_SetName.restype = ctypes.c_int
 
+# Separate bindings that accept capsule as c_void_p (raw pointer) rather than py_object,
+# for use inside capsule_destructor where the capsule refcount is already zero.
+_PyCapsule_IsValid_raw = ctypes.pythonapi["PyCapsule_IsValid"]
+_PyCapsule_IsValid_raw.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+_PyCapsule_IsValid_raw.restype = ctypes.c_int
+
+_PyCapsule_GetPointer_raw = ctypes.pythonapi["PyCapsule_GetPointer"]
+_PyCapsule_GetPointer_raw.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+_PyCapsule_GetPointer_raw.restype = ctypes.c_void_p
+
+PyCapsule_SetContext = ctypes.pythonapi.PyCapsule_SetContext
+PyCapsule_SetContext.argtypes = [ctypes.py_object, ctypes.c_void_p]
+PyCapsule_SetContext.restype = ctypes.c_int
+
+_PyCapsule_GetContext_raw = ctypes.pythonapi["PyCapsule_GetContext"]
+_PyCapsule_GetContext_raw.argtypes = [ctypes.c_void_p]
+_PyCapsule_GetContext_raw.restype = ctypes.c_void_p
+
+
+class _CapsuleCtx:
+    """Internal keepalive for DLPack capsule callbacks and the caller's manager_ctx."""
+
+    __slots__ = ("manager_ctx", "deleter_callback", "c_deleter", "capsule_destructor")
+
+    def __init__(self, manager_ctx: Any, deleter_callback: Optional[Callable]) -> None:
+        self.manager_ctx = manager_ctx
+        self.deleter_callback = deleter_callback
+        self.c_deleter = None
+        self.capsule_destructor = None
+
 
 def _to_dlpack_capsule(
     dl_tensor: DLTensor,
@@ -408,10 +446,9 @@ def _to_dlpack_capsule(
     Note:
         Per DLPack spec: Consumer renames capsule to "used_*" after extraction.
         Capsule destructor checks name and calls deleter only if unconsumed.
-        Callbacks are attached to manager_ctx._dlpack_callbacks to tie their
-        lifetime to the manager_ctx (which is kept alive via Py_IncRef).
+        manager_ctx is kept alive for the lifetime of the capsule.
     """
-    # Handle multi-lane types (e.g. RGBA with lanes=4) by expanding to extra dimension
+    # Handle vectorized dtypes (lanes > 1) by expanding to an extra shape dimension
     actual_ndim = dl_tensor.ndim + (1 if dl_tensor.dtype.lanes > 1 else 0)
 
     # Choose struct type and capsule name based on version
@@ -427,7 +464,7 @@ def _to_dlpack_capsule(
     shape_size = actual_ndim * ctypes.sizeof(ctypes.c_int64)
     total_size = managed_size + shape_size
 
-    mem_ptr = PyMem_RawMalloc(total_size)
+    mem_ptr = PyMem_Malloc(total_size)
     if not mem_ptr:
         raise MemoryError("Failed to allocate DLManagedTensor")
 
@@ -459,49 +496,61 @@ def _to_dlpack_capsule(
     managed_tensor.dl_tensor.shape = shape_ptr
     managed_tensor.dl_tensor.strides = None
 
-    # Keep Python context alive
-    managed_tensor.manager_ctx = id(manager_ctx)
-    Py_IncRef(manager_ctx)
+    # Two manual refs keep _capsule_ctx (and its CFUNCTYPEs) alive: one for c_deleter,
+    # one for capsule_destructor stored in the capsule context.
+    _capsule_ctx = _CapsuleCtx(manager_ctx, deleter_callback)
+    Py_IncRef(_capsule_ctx)  # held by c_deleter
+    managed_tensor.manager_ctx = id(_capsule_ctx)
 
-    # C deleter callback
     @DLPACK_DELETER
     def c_deleter(managed_ptr):
         mt = ManagedTensor.from_address(managed_ptr)
         ctx = ctypes.cast(mt.manager_ctx, ctypes.py_object).value
-        if deleter_callback is not None:
-            deleter_callback(ctx)
-        Py_DecRef(ctx)
-        PyMem_RawFree(managed_ptr)
+        try:
+            if ctx.deleter_callback is not None:
+                ctx.deleter_callback(ctx.manager_ctx)
+        finally:
+            Py_DecRef(ctx)
+            PyMem_Free(managed_ptr)
 
-    managed_tensor.deleter = c_deleter
-
-    # Capsule destructor
     @PyCapsule_Destructor
     def capsule_destructor(capsule_ptr):
-        capsule = ctypes.cast(capsule_ptr, ctypes.py_object)
-        if PyCapsule_IsValid(capsule, capsule_name):
-            managed_ptr = PyCapsule_GetPointer(capsule, capsule_name)
+        ctx_id = _PyCapsule_GetContext_raw(capsule_ptr)
+        if ctx_id:
+            ctx = ctypes.cast(ctx_id, ctypes.py_object).value
+            Py_DecRef(ctx)
+
+        # Use raw c_void_p bindings to avoid incrementing refcount on an object under deallocation.
+        # IsValid check skips the deleter when the capsule was already consumed (renamed by consumer).
+        if not _PyCapsule_IsValid_raw(capsule_ptr, capsule_name):
+            return
+        managed_ptr = _PyCapsule_GetPointer_raw(capsule_ptr, capsule_name)
+        if managed_ptr:
             mt = ManagedTensor.from_address(managed_ptr)
             if mt.deleter:
                 mt.deleter(managed_ptr)
 
+    _capsule_ctx.c_deleter = c_deleter
+    _capsule_ctx.capsule_destructor = capsule_destructor
+    managed_tensor.deleter = c_deleter
+
     capsule = PyCapsule_New(mem_ptr, capsule_name, capsule_destructor)
-
-    # Keep callback references alive by attaching to manager_ctx
-    # (manager_ctx is kept alive via Py_IncRef until c_deleter runs)
-    if not hasattr(manager_ctx, "_dlpack_callbacks"):
-        manager_ctx._dlpack_callbacks = []
-    manager_ctx._dlpack_callbacks.append((c_deleter, capsule_destructor))
-
+    Py_IncRef(_capsule_ctx)  # held by capsule_destructor
+    PyCapsule_SetContext(capsule, id(_capsule_ctx))
     return capsule
 
 
 class ManagedDLTensor:
     """Managed DLPack tensor wrapper with protocol version support.
 
+    Obtained from :attr:`AttributeMapping.tensor` (for attribute maps).
+    Pass the instance to ``np.from_dlpack()`` / ``wp.from_dlpack()`` /
+    ``torch.from_dlpack()`` for zero-copy array access, or call
+    :meth:`numpy` / :meth:`to_bytes` directly.
+
     Supports both DLPack 0.x and 1.0 protocols. When a consumer (e.g. NumPy 2.1+)
-    requests a versioned capsule via __dlpack__(max_version=...), this returns a
-    DLManagedTensorVersioned with proper read-only/writeable flags.
+    requests a versioned capsule via ``__dlpack__(max_version=...)``, this returns a
+    ``DLManagedTensorVersioned`` with proper read-only/writeable flags.
     """
 
     def __init__(
@@ -572,16 +621,14 @@ class ManagedDLTensor:
             ``ManagedDLTensor`` constructor, which sets the DLPack 1.0
             ``DLPACK_FLAG_BITMASK_READ_ONLY`` flag in the versioned capsule.
 
-            NumPy 2.1+ behavior:
-            - Calls ``__dlpack__(max_version=(1, 0))``
-            - Receives versioned capsule with flags
-            - Respects ``DLPACK_FLAG_BITMASK_READ_ONLY``; the returned array
-              is writeable only when the flag is not set.
+            **NumPy 2.1+ behavior:** Calls ``__dlpack__(max_version=(1, 0))``,
+            receives versioned capsule with flags, and respects
+            ``DLPACK_FLAG_BITMASK_READ_ONLY`` — the returned array is writeable
+            only when the flag is not set.
 
-            NumPy <2.1 behavior:
-            - Calls ``__dlpack__()`` without ``max_version``
-            - Receives legacy (unversioned) capsule
-            - Always marks external buffers as read-only regardless of flags
+            **NumPy <2.1 behavior:** Calls ``__dlpack__()`` without ``max_version``,
+            receives legacy (unversioned) capsule, and always marks external
+            buffers as read-only regardless of flags.
         """
         import numpy as np
 
@@ -627,10 +674,22 @@ class ManagedDLTensor:
         # max_version=(1, 0) and then respects the read-only flag; legacy capsules are read-only.
         use_versioned = max_version is not None and max_version[0] == DLPACK_MAJOR_VERSION and max_version >= (1, 0)
 
+        # Wrap deleter_callback so that c_deleter's invocation marks _cleanup_done on this
+        # ManagedDLTensor, preventing __del__ from re-invoking the callback.
+        if self._deleter_callback is not None:
+            original_cb = self._deleter_callback
+
+            def wrapped_cb(ctx, _self=self, _cb=original_cb):
+                _cb(ctx)
+                _self._cleanup_done = True
+
+        else:
+            wrapped_cb = None
+
         return _to_dlpack_capsule(
             self._dl_tensor,
             self._manager_ctx,
-            self._deleter_callback,
+            wrapped_cb,
             versioned=use_versioned,
             readonly=self._readonly,
         )

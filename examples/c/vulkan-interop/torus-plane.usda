@@ -167,6 +167,7 @@ def "Render" (
 {
     def RenderProduct "Camera" {
         int2 resolution = (1920, 1080)
+        uint[] deviceIds = [0]
         rel camera = </World/Camera>
         rel orderedVars = <HdrColor>
 
@@ -199,7 +200,6 @@ def "Render" (
                 bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
                 bool omni:rtx:post:registeredCompositing:invertToneMap = 1
                 int omni:rtx:pt:maxSamplesPerLaunch = 2073600
-                int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
                 bool omni:rtx:reflections:denoiser:enabled = 0
                 token omni:rtx:rendermode = "RealTimePathTracing"
                 color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
@@ -338,5 +338,4 @@ over "OmniverseKit_Top" (
     double3 xformOp:translate = (0, 50000, 0)
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 }
-
 

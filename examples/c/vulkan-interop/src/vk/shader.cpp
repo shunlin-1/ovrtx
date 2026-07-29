@@ -27,11 +27,13 @@ auto VulkanContext::create_linked_vertex_and_fragment_shaders(
     std::vector<uint32_t> const& vert_spirv, 
     std::vector<uint32_t> const& frag_spirv) -> std::pair<ShaderHandle, ShaderHandle> {
     
-    // Push constant range for fragment shader (texture index)
+    // Push constants are shared by the fullscreen pass (texture index) and the
+    // marquee overlay pass (rectangle + viewport size).
     VkPushConstantRange push_constant_range = {};
-    push_constant_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_constant_range.stageFlags =
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     push_constant_range.offset = 0;
-    push_constant_range.size = sizeof(uint32_t);
+    push_constant_range.size = sizeof(float) * 8;
     
     VkShaderCreateInfoEXT shader_infos[2] = {};
     
@@ -117,4 +119,3 @@ auto VulkanContext::bind_shaders(
     
     vkCmdBindShadersEXT(_vk_command_buffer, 5, stages, shader_handles);
 }
-

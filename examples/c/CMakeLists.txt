@@ -24,7 +24,10 @@ endif()
 
 # Include all examples
 add_subdirectory(minimal)
+add_subdirectory(status-queries)
 add_subdirectory(vulkan-interop)
+add_subdirectory(lidar)
+add_subdirectory(radar)
 
 # Note: the hybrid C++ + Python AGV viewer moved to examples/hybrid/agv/.
 # Configure it directly from that directory; it shares this folder's

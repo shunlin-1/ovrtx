@@ -14,8 +14,9 @@ PROJECT_ROOT  = $(abspath ..)
 # Python package directory (where pyproject.toml lives)
 PYTHON_DIR    = $(PROJECT_ROOT)/python
 
-# uv run with docs dependencies (cd into python/ for pyproject.toml, use absolute paths for sphinx)
-UVRUN         = cd $(PYTHON_DIR) && uv run --extra docs
+# uv command and docs dependencies (cd into python/ for pyproject.toml, use absolute paths for sphinx)
+UV            ?= uv
+UVRUN         = cd $(PYTHON_DIR) && $(UV) run --extra docs
 
 # Sphinx source and build dirs as absolute paths (needed because UVRUN changes cwd)
 DOCS_DIR      = $(PROJECT_ROOT)/docs

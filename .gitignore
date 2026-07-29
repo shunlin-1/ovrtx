@@ -3,6 +3,19 @@ _*/
 # But keep the Sphinx extensions directory.
 !docs/_ext/
 
+# Python virtual environments.
+.venv/
+python/uv.lock
+
+# Pytest cache.
+.pytest_cache/
+
+# Local agent/tooling breadcrumbs.
+.codex
+
+# Local C docs build output.
+tests/docs/c/build-dev/
+
 # Compiled python files.
 *.py[cod]
 
@@ -39,7 +52,3 @@ PACKAGE-DEPS.yaml
 **/crash*.txt
 
 /CMakeSettings.json
-
-# Don't commit uv.lock files, pin explicit versions where required instead.
-uv.lock
-**/uv.lock

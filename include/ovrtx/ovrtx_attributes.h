@@ -10,9 +10,14 @@
 #ifndef OVRTX_ATTRIBUTES_H
 #define OVRTX_ATTRIBUTES_H
 
-#include "ovrtx_types.h"
+#include "ovrtx.h"
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+
+/** @defgroup ovrtx_attribute_helpers Attribute helper functions
+ *  @{
+ */
 
 /*----------------------------------------------------------------------
 * Transform attribute writes
@@ -60,9 +65,10 @@ static inline ovrtx_enqueue_result_t ovrtx_set_reset_xform_stack(
 * Path and token attribute writes
 */
 
-/*
-* Sets path attribute values from paths as ovx_string_t
-*/
+/**
+ * Write path string values as relationship arrays to an attribute on the specified prims.
+ * @see The implementation section below for full parameter documentation.
+ */
 static inline ovrtx_enqueue_result_t ovrtx_set_path_attributes(
     ovrtx_renderer_t* instance,
     const ovx_string_t* prim_paths,
@@ -70,9 +76,10 @@ static inline ovrtx_enqueue_result_t ovrtx_set_path_attributes(
     ovx_string_t attribute_name,
     const ovx_string_t* path_values);
 
-/*
-* Sets token attribute values from tokens as ovx_string_t
-*/
+/**
+ * Write token string values to an attribute on the specified prims.
+ * @see The implementation section below for full parameter documentation.
+ */
 static inline ovrtx_enqueue_result_t ovrtx_set_token_attributes(
     ovrtx_renderer_t* instance,
     const ovx_string_t* prim_paths,
@@ -80,6 +87,7 @@ static inline ovrtx_enqueue_result_t ovrtx_set_token_attributes(
     ovx_string_t attribute_name,
     const ovx_string_t* token_values);
 
+/** @} */ // end of ovrtx_attribute_helpers
 
 /* ----------------------------------------------------------------------
 * Implementation
@@ -101,6 +109,13 @@ static inline ovrtx_enqueue_result_t ovrtx_set_token_attributes(
         typedef char OVRTX_CONCAT(ovrtx_static_assert_, __LINE__)[(cond) ? 1 : -1] OVRTX_UNUSED
 #endif
 
+/** Make a 1-D CPU DLTensor for C attribute writes.
+ *
+ * The C API uses @c DLDataType::lanes for multi-component attribute elements.
+ * For example, pass @c size=10 and @c dtype={kDLFloat,32,3} for a point3f[]
+ * array with 10 points, or @c size=N and @c dtype={kDLFloat,64,16} for N
+ * 4x4 double matrices.
+ */
 static inline DLTensor ovrtx_make_write_cpu_tensor(const void* ptr, const size_t* size, DLDataType dtype)
 {
     static int64_t s_stride1 = 1;

@@ -11,6 +11,8 @@
 Getting Started in C
 ====================
 
+ovrtx runtime validation requires an NVIDIA RTX-capable GPU, a supported NVIDIA driver, internet access, and execution outside sandboxed environments. The minimal example downloads scene assets from S3. Supported driver versions are listed in :doc:`../driver_requirements`.
+
 The C/C++ examples require CMake and a development environment. Install the prerequisites for your platform:
 
 .. tab-set::
@@ -25,15 +27,14 @@ The C/C++ examples require CMake and a development environment. Install the prer
 
          sudo apt-get install build-essential cmake
 
-Next, clone `the repository <https://github.com/NVIDIA-Omniverse/ovrtx>`__ and configure the minimal example:
+Next, clone `the repository <https://github.com/NVIDIA-Omniverse/ovrtx>`__:
 
 .. code-block:: bash
 
    git clone https://github.com/NVIDIA-Omniverse/ovrtx.git
    cd ovrtx/examples/c/minimal
-   cmake -B build
 
-Last, build and run the minimal example (choose your platform):
+Finally, configure, build, and run the minimal example for your platform:
 
 .. tab-set::
 
@@ -41,6 +42,7 @@ Last, build and run the minimal example (choose your platform):
 
       .. code-block:: text
 
+         cmake -B build
          cmake --build build --config Release
          .\build\Release\minimal.exe
 
@@ -48,18 +50,19 @@ Last, build and run the minimal example (choose your platform):
 
       .. code-block:: bash
 
-         cmake --build build --config Release
+         cmake -B build -DCMAKE_BUILD_TYPE=Release
+         cmake --build build
          ./build/minimal
 
-The minimal example shows how to create the renderer, load an OpenUSD scene and render a single image, copying the results back to the CPU for writing out as a PNG.
+The minimal example shows how to create the renderer, load an OpenUSD scene, and render a single image. The results are copied back to the CPU for writing out as a PNG.
 
 .. image:: ../../img/example-minimal.jpg
    :alt: Minimal example output
    :align: center
 
-The resulting image is written to ``./out.png`` and you can inspect it with any image viewer.
+A successful run writes ``./out.png``. The output should match the reference image above.
 
-The first time you run a program built against ovrtx, it compiles and caches necessary shaders, which may take some time depending on your system. Subsequent runs use the cached shaders and are faster.
+The first step from a newly built application will block for 1-2 minutes while shaders are compiled and cached.
 
 Installation
 ------------
@@ -101,12 +104,13 @@ ovrtx requires several libraries and other runtime dependencies to be present an
    ├── rendering-data/
    └── usd_plugins/
 
-The ovrtx dynamic library will automatically load the other dependencies at runtime if it is placed alongside them as in the binary distribution. If you need to deploy your application with a different layout, you can point ovrtx to the correct paths using the :c:func:`ovrtx_config_entry_binary_package_root_path` helper function when configuring the renderer:
+The ovrtx dynamic library will automatically load the other dependencies at runtime if it is placed alongside them as in the binary distribution. If you need to deploy your application with a different layout, you can point ovrtx to the correct paths using the :c:func:`ovrtx_config_entry_binary_package_root_path` helper function when configuring the renderer. When the package ``bin/`` directory lives next to your executable, use :c:macro:`OVX_CONFIG_EXECUTABLE_DIR_TOKEN` (``"${executable_dir}"``) instead of resolving the executable directory in client code:
 
 .. code-block:: c
 
    ovrtx_config_entry_t config_entries[] = {
-       ovrtx_config_entry_binary_package_root_path(ovx_string("/path/where/bin/contents/live"))
+       ovrtx_config_entry_binary_package_root_path(
+           literal_to_ovx_string(OVX_CONFIG_EXECUTABLE_DIR_TOKEN))
    };
 
    ovrtx_config_t config;
@@ -116,7 +120,45 @@ The ovrtx dynamic library will automatically load the other dependencies at runt
    ovrtx_renderer_t* renderer;
    ovrtx_result_t result = ovrtx_create_renderer(&config, &renderer);
 
-Note that when static linking ovrtx, you MUST provide the binary package root path or ovrtx will not be able to find the required dependencies at runtime.
+Note that when static linking ovrtx, you must provide the binary package root path or ovrtx will not be able to find the required dependencies at runtime.
+
+Sharing OpenUSD with Other Subsystems
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When ovrtx shares the OpenUSD runtime with other subsystems in the same process, every
+subsystem must publish its USD schema and plugin discovery paths *before* the USD schema
+registry is first populated; that registry is built only once per process. Use
+:c:func:`ovrtx_register_schema_paths` early so the order of subsequent initialize calls
+does not matter:
+
+.. code-block:: c
+
+   // Register schema paths up front, then initialize subsystems in any order.
+   // Pass the same config you will later supply to ovrtx_initialize / ovrtx_create_renderer
+   // so the binary package root used during registration matches the one used at init.
+   ovphysx_prepare_usd_plugins();
+   ovrtx_register_schema_paths(&config);
+
+   ovrtx_create_renderer(&config, &renderer);
+
+For default deployments where ovrtx lives next to the loader library, ``NULL`` is
+acceptable and the loader-library directory is used as the root:
+
+.. code-block:: c
+
+   ovrtx_register_schema_paths(NULL);
+
+For ovrtx-only applications this call is not required — :c:func:`ovrtx_initialize` /
+:c:func:`ovrtx_create_renderer` register the same paths automatically.
+
+Once schema paths have been registered against an effective binary package root, any
+later :c:func:`ovrtx_register_schema_paths`, :c:func:`ovrtx_initialize`, or
+:c:func:`ovrtx_create_renderer` call that resolves to a different root logs a warning
+to stderr and is treated as a no-op against the first-registered root —
+``PXR_PLUGINPATH_NAME`` is one-shot per process, so the first call wins. Use the same
+``OVRTX_CONFIG_BINARY_PACKAGE_ROOT_PATH`` (or the same ``OMNI_USD_PLUGINS_BASE_PATH``
+override) throughout the process. See the function's API documentation for the full
+contract.
 
 Minimal Example
 ---------------
@@ -133,5 +175,5 @@ Minimal Example
 Next Steps
 ----------
 
-* Explore more :doc:`../examples/index` including the :doc:`Vulkan Interop <../examples/c_vulkan_interop>` example with real-time GPU rendering.
-* See the :doc:`index` for the full C API reference.
+* Explore more :doc:`../examples/index` including the :doc:`Vulkan Interop <../examples/c_vulkan_interop>` example with real-time GPU rendering, click picking, marquee selection, and styled selection outlines with translucent fill.
+* Refer to the :doc:`index` for the full C API reference.

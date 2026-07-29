@@ -13,6 +13,9 @@ C API Reference
 
 The C API provides low-level access to the ovrtx rendering library.
 
+For lifecycle, error-handling, status-query, logging, and ``ovx_string_t``
+usage patterns, start with :doc:`practical_patterns`.
+
 .. contents:: Contents
    :local:
    :depth: 2
@@ -27,14 +30,19 @@ All operations return a status code indicating success or failure:
 - **OVRTX_API_TIMEOUT**: The operation timed out
 
 Many operations are stream-ordered and execute asynchronously. They return handles that can be used in subsequent operations, but the actual effects may not be produced until stream execution completes.
-
-Known Limitations
------------------
-
-In the current version, if you wish to use OpenUSD in the same process as ovrtx, you must use the same version of OpenUSD as the one used to build ovrtx. This means that you must use `OpenUSD v25.11 <https://github.com/PixarAnimationStudios/OpenUSD/tree/v25.11>`_, built as non-monolithic libraries with Python support enabled (the default). You must also use oneTBB v2021.13.0 or later when building OpenUSD.
+For these asynchronous operations, enqueue may still succeed while execution fails later. Check
+:c:func:`ovrtx_wait_op` and inspect ``ovrtx_op_wait_result_t.error_op_ids``, then retrieve per-op
+details with :c:func:`ovrtx_get_last_op_error`.
 
 Functions
 ---------
+
+Version
+^^^^^^^
+
+.. doxygengroup:: ovrtx_version
+   :project: ovrtx
+   :content-only:
 
 Creation and Destruction
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -50,10 +58,24 @@ Stage Building
    :project: ovrtx
    :content-only:
 
-Attribute Operations
-^^^^^^^^^^^^^^^^^^^^
+Attribute Writes
+^^^^^^^^^^^^^^^^
 
 .. doxygengroup:: ovrtx_attribute_write
+   :project: ovrtx
+   :content-only:
+
+Attribute Reads
+^^^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_attribute_read
+   :project: ovrtx
+   :content-only:
+
+Stage Queries
+^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_stage_query
    :project: ovrtx
    :content-only:
 
@@ -82,6 +104,20 @@ Error Handling
 ^^^^^^^^^^^^^^
 
 .. doxygengroup:: ovrtx_error
+   :project: ovrtx
+   :content-only:
+
+Configuration Helpers
+^^^^^^^^^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_config_helpers
+   :project: ovrtx
+   :content-only:
+
+Attribute Helpers
+^^^^^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_attribute_helpers
    :project: ovrtx
    :content-only:
 
@@ -123,13 +159,6 @@ Synchronization Types
    :project: ovrtx
    :content-only:
 
-User Task Types
-^^^^^^^^^^^^^^^
-
-.. doxygengroup:: ovrtx_user_task_types
-   :project: ovrtx
-   :content-only:
-
 Attribute Types
 ^^^^^^^^^^^^^^^
 
@@ -137,9 +166,58 @@ Attribute Types
    :project: ovrtx
    :content-only:
 
+Query Types
+^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_query_types
+   :project: ovrtx
+   :content-only:
+
+Read Types
+^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_read_types
+   :project: ovrtx
+   :content-only:
+
 Sensor Types
 ^^^^^^^^^^^^
 
 .. doxygengroup:: ovrtx_sensor_types
+   :project: ovrtx
+   :content-only:
+
+Picking Types
+^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_pick_types
+   :project: ovrtx
+   :content-only:
+
+Selection Styling Types
+^^^^^^^^^^^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_selection_style_types
+   :project: ovrtx
+   :content-only:
+
+Operation Status Types
+^^^^^^^^^^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_op_status_types
+   :project: ovrtx
+   :content-only:
+
+Logging Types
+^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_log_types
+   :project: ovrtx
+   :content-only:
+
+Configuration Types
+^^^^^^^^^^^^^^^^^^^
+
+.. doxygengroup:: ovrtx_config_types
    :project: ovrtx
    :content-only:

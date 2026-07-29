@@ -11,7 +11,7 @@
 #define OVRTX_TYPES_H
 
 #define OVRTX_VERSION_MAJOR 0
-#define OVRTX_VERSION_MINOR 2
+#define OVRTX_VERSION_MINOR 4
 #define OVRTX_VERSION_PATCH 0
 
 #include <stdint.h>
@@ -49,11 +49,11 @@ extern "C"
     typedef uint64_t ovrtx_map_handle_t;
     /** Handle to the result of a @ref ovrtx_step() operation. */
     typedef uint64_t ovrtx_step_result_handle_t;
-    /** Handle to a rendered output. */
-    typedef uint64_t ovrtx_rendered_output_handle_t;
-    /** Handle to the mapping of a rendered output that can be used to unmap it. */
-    typedef uint64_t ovrtx_rendered_output_map_handle_t;
-    /** Identifier of a particular asynchronous operation such as @ref ovrtx_add_usd() that can be used to poll or wait. */
+    /** Handle to a rendered output; pass to @ref ovrtx_map_render_var_output() to access its data. */
+    typedef uint64_t ovrtx_render_var_output_handle_t;
+    /** Handle to the mapping of a rendered output that can be used to unmap it with @ref ovrtx_unmap_render_var_output(). */
+    typedef uint64_t ovrtx_render_var_output_map_handle_t;
+    /** Identifier of a particular asynchronous operation such as @ref ovrtx_open_usd_from_file() that can be used to poll or wait. */
     typedef uint64_t ovrtx_op_id_t;
 
     /**
@@ -90,16 +90,19 @@ extern "C"
     } ovrtx_result_t;
 
     /**
-     * @brief Result from an aynschronous function call.
+     * @brief Result from an asynchronous function call.
      *
-     * The immediate status of the call can be checked with the @ref ovrtx_enqueue_result_t::status field, and @ref ovrtx_enqueue_result_t::op_index can be used to poll 
-     * or wait on the completion of the asynchronous work.
+     * Contains the API call status and the operation index. A non-zero operation index can be used to poll or wait
+     * on completion, while OVRTX_INVALID_HANDLE means the operation could not be enqueued.
+     *
+     * Note that if OVRTX_CONFIG_SYNC_MODE is active any error from the async operation itself will cause status to
+     * be OVRTX_API_ERROR and the error is obtainable using ovrtx_get_last_error(). In addition to this a valid
+     * operation index is still delivered and can be waited on (even though the operation has already failed).
      */
     typedef struct
     {
-        ovrtx_api_status_t status; /**< Status of the call */
-        ovrtx_op_id_t op_index; /**< Operation identifier that can be used to poll or wait on the completion of the 
-                                     enqueued work */
+        ovrtx_api_status_t status; /**< Status of the API call. */
+        ovrtx_op_id_t op_index; /**< Non-zero operation identifier if operation enqueued successfully, OVRTX_INVALID_HANDLE otherwise. */
     } ovrtx_enqueue_result_t;
 
     typedef enum
@@ -212,6 +215,9 @@ extern "C"
         OVRTX_SEMANTIC_XFORM_POS3d_ROT3x3f = 3, /**< Transform of a prim expressed as 3xdouble position, 3x3float row-major rotation matrix (kDLUInt, 8, 64) */
         OVRTX_SEMANTIC_PATH_STRING = 4, /**< Prim paths expressed as ovx_string_t (kDLUInt, 128, 1). The strings must be valid for the duration of the write_attribute call. Only synchronous data access is supported.*/
         OVRTX_SEMANTIC_TOKEN_STRING = 5,  /**< String token expressed as ovx_string_t (kDLUInt, 128, 1). The strings must be valid for the duration of the write_attribute call. Only synchronous data access is supported.*/
+        OVRTX_SEMANTIC_TOKEN_ID = 6, /**< Raw token identifier (kDLUInt, 64, 1). Returned by query for attributes whose Fabric base type is Token. Resolve to a string via the path dictionary. */
+        OVRTX_SEMANTIC_PATH_ID = 7, /**< Raw path identifier (kDLUInt, 64, 1). Returned by query for attributes whose Fabric base type is Path. Resolve to a string via the path dictionary. */
+        OVRTX_SEMANTIC_TAG = 8, /**< Name-only attribute with no value or storage. Returned by query for Fabric tag attributes. No data should be read. */
     }ovrtx_attribute_semantic_t;
 
     /*
@@ -288,13 +294,6 @@ extern "C"
         ovrtx_attribute_binding_handle_t binding_handle; /**< handle to a persistent binding */
     } ovrtx_binding_desc_or_handle_t;
 
-    /** Represents a USD stage or layer to be used as input to @ref ovrtx_add_usd() */
-    typedef struct ovrtx_usd_input_t
-    {
-        ovx_string_t usd_file_path; /**< Path to the USD file to add */
-        uint64_t usd_stage_id; /**< Stage ID of a USD runtime stage to add */
-        ovx_string_t usd_layer_content; /**< Usda content of the layer to add */
-    } ovrtx_usd_input_t;
 
     typedef struct
     {
@@ -328,12 +327,43 @@ extern "C"
         /** @} */
     } ovrtx_input_buffer_t;
 
-    /** Output DLTensor generated for a particular frame, product and var. */
+    /** Optional destination for @ref ovrtx_read_attribute() scalar read data.
+     *
+     * When the @c tensor pointer is non-null the read writes directly into the
+     * caller-provided buffer instead of allocating internal storage.  The tensor
+     * must be pre-allocated with shape [prim_count] and a matching element size,
+     * including @c DLTensor::dtype.lanes for multi-component attributes.
+     * For GPU tensors (@c kDLCUDA) the data is copied via cudaMemcpy.
+     * Must be NULL for array attributes (variable-length per prim).
+     */
+    typedef struct
+    {
+        DLTensor* tensor;                       /**< Pre-allocated destination (NULL = use internal buffer) */
+        ovrtx_cuda_sync_t access_cuda_sync;     /**< Event to wait on before writing to the tensor */
+        ovrtx_cuda_sync_t done_cuda_sync;       /**< Event to signal after writing is complete */
+    } ovrtx_read_dest_t;
+
+    /** @deprecated Use ovrtx_render_var_output_t tensors[]->dl instead.
+     *  Kept for source compatibility with existing consumers. */
     typedef struct
     {
         DLTensor dl; /**< Zero-copy tensor (required) */
         ovrtx_cuda_sync_t cuda_sync; /**< Optional CUDA synchronization hints associated with this buffer */
     } ovrtx_output_buffer_t;
+
+    /** Named render variable param represented as a DLTensor with labels.
+     *
+     * The DLTensor's dtype encodes the value type (e.g. kDLFloat/32 for float,
+     * kDLUInt/64 for uint64_t) and shape encodes scalar vs. array
+     * (e.g. {1} for scalar, {N} for array, {4,4} for a matrix).
+     * Param values are always CPU-resident: param.device is {kDLCPU, 0}.
+     */
+    typedef struct
+    {
+        DLTensor dl; /**< Value tensor (dtype encodes type, shape encodes scalar/array) */
+        ovx_string_t name; /**< Entry name (e.g. "frameId", "timestampNs") */
+        ovx_string_t doc; /**< Human-readable description */
+    } ovrtx_render_var_param_t;
 
     /** Mapped attribute that can be written to until unmapped. */
     typedef struct
@@ -343,6 +373,118 @@ extern "C"
     } ovrtx_attribute_mapping_t;
 
     /** @} */ // end of ovrtx_attribute_types
+
+    /** @defgroup ovrtx_query_types Stage query types
+     *  @{
+     */
+
+    /** Handle to the result of a @ref ovrtx_query_prims() operation. */
+    typedef uint64_t ovrtx_query_handle_t;
+
+    typedef enum ovrtx_filter_kind_t
+    {
+        OVRTX_FILTER_PRIM_TYPE = 0,     /**< Match by USD prim type name (e.g., "Mesh", "SphereLight") */
+        OVRTX_FILTER_HAS_ATTRIBUTE = 1, /**< Match by attribute existence (e.g., "points", "normals") */
+    } ovrtx_filter_kind_t;
+
+    typedef struct ovrtx_filter_t
+    {
+        ovrtx_filter_kind_t kind;   /**< What property to match */
+        ovx_string_or_token_t name; /**< Prim type name or attribute name */
+    } ovrtx_filter_t;
+
+    typedef enum ovrtx_attribute_filter_mode_t
+    {
+        OVRTX_ATTRIBUTE_FILTER_NONE = 0,     /**< Do not report attributes (lightweight) */
+        OVRTX_ATTRIBUTE_FILTER_ALL = 1,      /**< Report every attribute on each group */
+        OVRTX_ATTRIBUTE_FILTER_SPECIFIC = 2, /**< Report only the named subset of attributes */
+    } ovrtx_attribute_filter_mode_t;
+
+    typedef struct ovrtx_attribute_filter_t
+    {
+        ovrtx_attribute_filter_mode_t mode; /**< Which attributes to report */
+        const ovx_string_or_token_t* attribute_names; /**< Attribute names (used when mode is SPECIFIC) */
+        size_t attribute_name_count;                   /**< Number of entries in attribute_names */
+    } ovrtx_attribute_filter_t;
+
+    typedef struct ovrtx_query_desc_t
+    {
+        const ovrtx_filter_t* require_all;  /**< Filters the prim must match (AND) */
+        size_t require_all_count;           /**< Number of require_all filters */
+        const ovrtx_filter_t* require_any;  /**< Filters the prim must match at least one of (OR) */
+        size_t require_any_count;           /**< Number of require_any filters */
+        const ovrtx_filter_t* exclude;      /**< Filters the prim must not match (NOT) */
+        size_t exclude_count;               /**< Number of exclude filters */
+
+        ovrtx_attribute_filter_t attribute_filter; /**< Which attributes to report per group */
+    } ovrtx_query_desc_t;
+
+    /** Describes a single attribute on a group of prims in the query result.
+     *  The name is a token that can be resolved to a string via the path dictionary's
+     *  get_strings_from_tokens. */
+    typedef struct ovrtx_attribute_desc_t
+    {
+        ovx_token_t name; /**< Attribute name token (resolve via path dictionary) */
+        ovrtx_attribute_type_t type; /**< Attribute data type, array-ness, and semantic */
+    } ovrtx_attribute_desc_t;
+
+    /** A group of prims sharing the same attribute schema, returned by @ref ovrtx_fetch_query_results().
+     *
+     * All prims in a group are guaranteed to have the same set of attributes.
+     * The @ref ovrtx_query_prim_group_t::prim_list_handle can be plugged directly into
+     * @ref ovrtx_binding_desc_t::prims_list_handle for subsequent read or write operations.
+     */
+    typedef struct ovrtx_query_prim_group_t
+    {
+        size_t prim_count;                  /**< Number of prims in this group */
+        ovx_primpath_list_t prim_list_handle; /**< Handle to the prim paths in this group */
+
+        const ovrtx_attribute_desc_t* attributes; /**< Array of attribute descriptors (NULL if not requested) */
+        size_t attribute_count;                    /**< Number of entries in attributes */
+    } ovrtx_query_prim_group_t;
+
+    /** Result of a @ref ovrtx_query_prims() operation retrieved via @ref ovrtx_fetch_query_results().
+     *
+     * Contains one group per matching bucket. All pointers are valid until
+     * @ref ovrtx_release_query_results() is called.
+     */
+    typedef struct ovrtx_query_result_t
+    {
+        const ovrtx_query_prim_group_t* groups; /**< Array of prim groups */
+        size_t group_count;                      /**< Number of groups */
+        size_t total_prim_count;                 /**< Sum of prim_count across all groups */
+    } ovrtx_query_result_t;
+
+    /** @} */ // end of ovrtx_query_types
+
+    /** @defgroup ovrtx_read_types Stage attribute read types
+     *  @{
+     */
+
+    /** Handle to the result of a @ref ovrtx_read_attribute() operation.
+     *  The same handle is passed to @ref ovrtx_fetch_read_result() and
+     *  @ref ovrtx_release_read_result(). */
+    typedef uint64_t ovrtx_read_handle_t;
+
+    /** Attribute read output retrieved via @ref ovrtx_fetch_read_result().
+     *
+     * For scalar attributes @ref ovrtx_read_output_t::buffer_count is 1 and the single tensor
+     * has shape [prim_count]. For array attributes @ref ovrtx_read_output_t::buffer_count equals
+     * @ref ovrtx_read_output_t::prim_count with one tensor per prim of variable length.
+     * Multi-component C attribute tensors encode component count in @c DLTensor::dtype.lanes.
+     *
+     * When a user-provided destination tensor was passed to @ref ovrtx_read_attribute(),
+     * buffer_count is 0 (the data was written directly into the caller's tensor).
+     */
+    typedef struct ovrtx_read_output_t
+    {
+        ovrtx_output_buffer_t* buffers;     /**< Array of output tensors (NULL when dest tensor was used) */
+        size_t buffer_count;                /**< Number of buffers (1 for scalar, prim_count for array, 0 if dest tensor) */
+        size_t prim_count;                  /**< Number of prims that were actually read */
+        bool is_array;                      /**< True if the attribute is variable-length per prim (resolved from stage) */
+    } ovrtx_read_output_t;
+
+    /** @} */ // end of ovrtx_read_types
 
     /** @defgroup ovrtx_sensor_types Sensor simulation types
      *  @{
@@ -367,13 +509,20 @@ extern "C"
     typedef struct
     {
         ovx_string_t render_var_name; /**< Name of the associated render var */
-        ovrtx_rendered_output_handle_t output_handle; /**< Handle to the rendered output */
+        ovrtx_render_var_output_handle_t output_handle; /**< Handle to the rendered output. */
     } ovrtx_render_product_render_var_output_t;
+
+    /** Path-tracing accumulation status for a rendered frame. */
+    typedef struct
+    {
+        uint32_t progression; /**< PT sample accumulation progress since the last reset, increments each time an output is renderered to */
+        bool converged;         /**< True when a stop criterion was reached (ex: omni:rtx:pt:samplesPerPixel) */
+    } ovrtx_accumulation_status_t;
 
     /** Output of a particular RenderProduct for a particular frame. 
      *
      * May contain one or more RenderVar outputs in @ref ovrtx_render_product_frame_output_t::output_render_vars which may
-     * each be mapped to get access to the output data using @ref ovrtx_map_rendered_output().
+     * each be mapped to get access to the output data using @ref ovrtx_map_render_var_output().
      */
     typedef struct
     {
@@ -381,6 +530,7 @@ extern "C"
         double frame_end_time; /**< Sensor time (based on step(delta_time) history) when the sensor simulation for this frame ended */
         ovrtx_render_product_render_var_output_t* output_render_vars; /**< Pointer to array of render var outputs */
         size_t render_var_count; /**< Number of render var outputs for this render product frame */
+        ovrtx_accumulation_status_t accumulation_status; /**< Path-tracing accumulation status for this frame */
     } ovrtx_render_product_frame_output_t;
 
     /** The output of a particular RenderProduct for a particular @ref ovrtx_step() operation. 
@@ -411,6 +561,102 @@ extern "C"
         double end_time; /**< Sensor time (based on step(delta_time) history) when the sensor simulation for this step ended */
     } ovrtx_render_product_set_outputs_t;
 
+#define OVRTX_RENDER_VAR_PICK_HIT "ovrtx_pick_hit"
+
+    /** @defgroup ovrtx_pick_types Pick query and pick-hit buffer layout
+     *  @{
+     */
+
+#define OVRTX_PICK_FLAG_GIZMO (1u << 0)
+#define OVRTX_PICK_FLAG_INCLUDE_TRACKED_INFO (1u << 1)
+
+    /** Pick rectangle in normalized RenderProduct coordinates. Values use [0, 1] top-left-origin NDC:
+     *  x increases left-to-right and y increases top-to-bottom. The rectangle uses the same convention as
+     *  the old pixel API: @c right_ndc and @c bottom_ndc mark the edge just past the last included pixel.
+     *  For example, pixel (x, y) on a width x height RenderProduct is
+     *  [x / width, y / height, (x + 1) / width, (y + 1) / height]; the full RenderProduct is [0, 0, 1, 1].
+     *  Out-of-bounds values are rejected; boundary values may be clamped to the valid range to account for
+     *  floating-point roundoff. */
+    typedef struct ovrtx_pick_query_desc_t
+    {
+        ovx_string_t render_product_path;
+        float left_ndc;
+        float top_ndc;
+        float right_ndc;
+        float bottom_ndc;
+        uint32_t flags;
+    } ovrtx_pick_query_desc_t;
+
+    /**
+     * Schema-identity / schema-version handshake for the multi-tensor render variable
+     * @ref OVRTX_RENDER_VAR_PICK_HIT. The mapped output exposes both as named ``uint32``
+     * params (``magic`` and ``version``); consumers must validate
+     * ``magic == OVRTX_PICK_HIT_MAGIC`` and ``version == OVRTX_PICK_HIT_VERSION``
+     * before reading the v1 tensor schema. The number of valid records is published as
+     * the ``hitCount`` param. Hits contain @ref ovx_primpath_t handles only; resolve to
+     * UTF-8 with the renderer path dictionary if needed.
+     */
+#define OVRTX_PICK_HIT_MAGIC 0x56505448u  /**< 'VPTH' */
+#define OVRTX_PICK_HIT_VERSION 1u
+
+    /** @} */
+
+    /** @defgroup ovrtx_selection_style_types Selection-outline / fill styling
+     *  @{
+     *
+     * The selection outline pass supports two layers of styling:
+     *
+     * 1. Per-group state (outline color, fill color) — set at runtime via
+     *    @ref ovrtx_set_selection_group_styles. The slot is keyed by the
+     *    per-prim group id passed to @ref ovrtx_set_selection_outline_group.
+     *
+     * 2. Global state (outline thickness, fill mode) — set at renderer creation
+     *    via @ref OVRTX_CONFIG_SELECTION_OUTLINE_WIDTH and
+     *    @ref OVRTX_CONFIG_SELECTION_FILL_MODE. Changing these at runtime
+     *    requires destroying and recreating the renderer.
+     *
+     * Outline dashing/stippling is **not supported** by the underlying RTX
+     * outline pipeline and is intentionally not exposed here.
+     */
+
+    /** Selection-outline interior (fill) mode. Mirrors @c OutlineMode in the underlying RTX shader.
+     *  Set globally via @ref OVRTX_CONFIG_SELECTION_FILL_MODE at renderer creation. */
+    typedef enum ovrtx_selection_fill_mode_t
+    {
+        /** No interior fill (outline edge only). */
+        OVRTX_SELECTION_FILL_MODE_EDGE_ONLY = 0,
+        /** Global intersection color shared by all groups (kGlobalColorForInterior). */
+        OVRTX_SELECTION_FILL_MODE_GLOBAL = 1,
+        /** Use each group's outline color as its interior fill (kOutlineColorForInterior). */
+        OVRTX_SELECTION_FILL_MODE_GROUP_OUTLINE_COLOR = 2,
+        /** Use each group's dedicated fill/shade color as its interior fill (kShadeColorForInterior). */
+        OVRTX_SELECTION_FILL_MODE_GROUP_FILL_COLOR = 3,
+    } ovrtx_selection_fill_mode_t;
+
+    /** Motion BVH (ray-traced motion) mode for sensor and motion-sensitive pipelines.
+     *  Set via @ref OVRTX_CONFIG_MOTION_BVH at renderer creation. */
+    typedef enum ovrtx_motion_bvh_t
+    {
+        /** Motion BVH disabled (default when the config entry is omitted). */
+        OVRTX_MOTION_BVH_DISABLE = 0,
+        /** Motion BVH enabled from renderer creation. */
+        OVRTX_MOTION_BVH_ENABLE = 1,
+        /** Motion BVH enabled at runtime when a non-visual sensor or motion-sensitive camera is rendered. */
+        OVRTX_MOTION_BVH_AUTO = 2,
+    } ovrtx_motion_bvh_t;
+
+    /** Visual styling for one selection-outline group. RGBA components in [0..1]. */
+    typedef struct ovrtx_selection_group_style_t
+    {
+        /** Outline edge color (matches @c /persistent/app/viewport/outline/color). */
+        float outline_color[4];
+        /** Interior fill color (matches @c /persistent/app/viewport/outline/shadeColor;
+         *  used when @ref OVRTX_CONFIG_SELECTION_FILL_MODE selects per-group fill modes). */
+        float fill_color[4];
+    } ovrtx_selection_group_style_t;
+
+    /** @} */ // end of ovrtx_selection_style_types
+
 
     /** Specifies which device (CPU or GPU) should be used to map a given output. */
     typedef enum
@@ -425,10 +671,14 @@ extern "C"
         OVRTX_MAP_DEVICE_TYPE_CUDA_ARRAY = 3,
     } ovrtx_map_device_type_t;
 
-    /** Description of the device and synchronization for mapping an output to be passed to @ref ovrtx_map_rendered_output(). */
+    /** Description of the device and synchronization for mapping an output to be passed to @ref ovrtx_map_render_var_output().
+     *
+     *  The device_type applies to tensors only. Param entries are always mapped to CPU
+     *  regardless of this setting.
+     */
     typedef struct
     {
-        ovrtx_map_device_type_t device_type; /**< Device type of the output */
+        ovrtx_map_device_type_t device_type; /**< Requested device for tensors (params are always CPU) */
         uintptr_t sync_stream; /**< CUDA stream to synchronize production of the output with. 
                                 Providing a stream here means that after the map call returns the output
                                 data can immediately be accessed on a cuda stream that is synchronized to the provided stream.
@@ -436,23 +686,57 @@ extern "C"
         
     } ovrtx_map_output_description_t;
 
-    /** The output of a particular RenderVar for a particular RenderProduct on a particular frame. */
+
+    /** One tensor slot in a mapped render variable output (DLPack view plus labels).
+     *
+     *  Lifetime: pointers are valid from ovrtx_map_render_var_output() until ovrtx_unmap_render_var_output().
+     */
+    typedef struct
+    {
+        const DLTensor* dl; /**< DLPack tensor (device per map request; may be CUDA array as opaque handle) */
+        const ovx_string_t* name; /**< Tensor name (e.g. channel or slice); never NULL when num_tensors > 0 */
+        const ovx_string_t* doc; /**< Human-readable tensor description; may point to an empty string */
+    } ovrtx_render_var_tensor_t;
+
+    /** The output of a particular RenderVar for a particular RenderProduct on a particular frame.
+     *
+     *  Contains zero or more named tensor slots (@ref ovrtx_render_var_tensor_t) and zero or more named param entries.
+     *  Tensor data may reside on CPU or CUDA depending on the map request.
+     *  Params are always CPU-resident.
+     *
+     *  Lifetime: valid from ovrtx_map_render_var_output() until ovrtx_unmap_render_var_output().
+     *
+     *  @note ABI break from pre-0.3: the ovrtx_output_buffer_t buffer field has been removed.
+     *        Consumers must migrate to the tensors[]/params[] layout.
+     */
     typedef struct
     {
         ovrtx_event_status_t status; /**< Current operation status */
         ovx_string_t error_message; /**< Error description if failed, NULL if succeeded */
-        ovrtx_rendered_output_map_handle_t map_handle; /**< Handle to use for unmap */
-        ovx_string_t name; /**< Name of the output (e.g., "rgb", "depth") */
-        ovrtx_output_buffer_t buffer; /**< Buffer containing the rendered data */
-    } ovrtx_rendered_output_t;
+        ovrtx_render_var_output_map_handle_t map_handle; /**< Handle to use for unmap */
+        ovrtx_cuda_sync_t cuda_sync; /**< Single sync covering all tensors */
 
-    /*--------------------------------------------------*/
-    /* Operation status types */
-    /*--------------------------------------------------*/
+        ovx_string_t name; /**< Render variable name (e.g., "PointCloud", "HdrColor") */
+        ovx_string_t type; /**< Semantic type identifier */
+        ovx_string_t doc; /**< Human-readable description */
+        int version; /**< Output schema version */
+
+        size_t num_tensors; /**< Number of tensors in this output (may be 0) */
+        const ovrtx_render_var_tensor_t* tensors; /**< Array of num_tensors tensor descriptors */
+
+        size_t num_params; /**< Number of param entries in this output (may be 0) */
+        const ovrtx_render_var_param_t* params; /**< Array of num_params entries (always CPU) */
+    } ovrtx_render_var_output_t;
+
+    /** @} */ // end of ovrtx_sensor_types
+
+    /** @defgroup ovrtx_op_status_types Operation status types
+     *  @{
+     */
 
     /**
      * Named resource counter for tracking progress of specific resource types.
-     * 
+     *
      * Counter semantics:
      * - name: Identifies the resource type (e.g., "shaders", "textures", "materials")
      * - current: Number of items processed so far
@@ -467,7 +751,7 @@ extern "C"
 
     /**
      * Operation status information for long-running operations.
-     * 
+     *
      * Progress semantics:
      * - Range [0.0, 1.0] where 1.0 = complete
      * - Negative value indicates indeterminate progress
@@ -476,51 +760,58 @@ extern "C"
     {
         ovrtx_op_id_t op_id;            /**< Operation ID this status refers to */
         ovrtx_event_status_t state;     /**< PENDING, COMPLETED, or FAILURE */
-        
+
         /** Progress as fraction [0.0, 1.0], or negative if indeterminate */
         double progress;
-        
+
         /** Named resource counters (variable count, operation-dependent) */
         ovrtx_op_counter_t* counters;
         size_t counter_count;
     } ovrtx_op_status_t;
 
-    /*--------------------------------------------------*/
-    /* Logging callback types */
-    /*--------------------------------------------------*/
+    /** @} */ // end of ovrtx_op_status_types
+
+    /** @defgroup ovrtx_log_types Logging types
+     *  @{
+     */
 
     /**
      * Log severity levels for operation messages.
      */
     typedef enum ovrtx_log_severity_t
     {
-        OVRTX_LOG_INFO = 0,     /**< Informational message */
-        OVRTX_LOG_WARNING = 1,  /**< Warning (operation continues) */
-        OVRTX_LOG_ERROR = 2,    /**< Error (operation may have failed) */
+        OVRTX_LOG_INFO = -1,     /**< Informational message */
+        OVRTX_LOG_WARNING = 0,  /**< Warning (operation continues) */
+        OVRTX_LOG_ERROR = 1,    /**< Error (operation may have failed) */
+        OVRTX_LOG_FATAL = 2,    /**< Fatal error (operation may have failed) */
     } ovrtx_log_severity_t;
 
     /**
-     * Callback function type for receiving operation log messages.
-     * 
-     * This callback is invoked from the operation's execution context when
-     * a log message is generated. The callback must be thread-safe as it may
-     * be called from any thread.
-     * 
+     * Callback function type for receiving log messages.
+     *
+     * The callback is process-global (see ovrtx_set_log_callback) and may be
+     * invoked from any thread. The implementation serializes invocations so
+     * the callback body itself does not need its own mutex, but it must still
+     * be thread-safe with respect to whatever data it touches outside.
+     *
      * The message string is only valid for the duration of the callback.
      * If the message needs to be retained, copy it before returning.
-     * 
-     * @param op_id Operation ID that generated this message
+     *
      * @param severity Severity level of the message
-     * @param timestamp Time in seconds since operation started
+     * @param timestamp Wall-clock time in seconds since the epoch
      * @param message Log message text (valid only during callback)
      * @param user_data User-provided context from ovrtx_set_log_callback
      */
-    typedef void (*ovrtx_log_callback_t)(ovrtx_op_id_t op_id,
-                                         ovrtx_log_severity_t severity,
+    typedef void (*ovrtx_log_callback_t)(ovrtx_log_severity_t severity,
                                          double timestamp,
                                          ovx_string_t message,
                                          void* user_data);
 
+    /** @} */ // end of ovrtx_log_types
+
+    /** @defgroup ovrtx_config_types Configuration types
+     *  @{
+     */
 
     /** Key type tag for @ref ovrtx_config_entry_t; selects which key and value union members are valid. */
     typedef enum ovrtx_config_key_type_t
@@ -543,13 +834,21 @@ extern "C"
         OVRTX_CONFIG_ENABLE_PROFILING,
         /** If true, uses GPU world transform propagation during rendering. Create_renderer. */
         OVRTX_CONFIG_READ_GPU_TRANSFORMS,
-        /** If true, outputs partial frames for incremental sensors. Create_renderer. */
-        OVRTX_CONFIG_OUTPUT_PARTIAL_FRAMES,
         /** If true, keeps the renderer system alive after all instances are destroyed (for reuse). Create_renderer. */
         OVRTX_CONFIG_KEEP_SYSTEM_ALIVE,
         /** If true, uses Vulkan; if false, uses DX12 (Windows only). Create_renderer.
          *  When not specified, defaults to platform default (DX12 on Windows, Vulkan on Linux). */
         OVRTX_CONFIG_USE_VULKAN,
+        /** If true, enables the selection outline postprocessing pass. Create_renderer.
+         *  When not specified, defaults to false. */
+        OVRTX_CONFIG_SELECTION_OUTLINE_ENABLED,
+        /** API key for the geometry streaming opt-in flag. Create_renderer. */
+        OVRTX_CONFIG_ENABLE_GEOMETRY_STREAMING,
+        /** API key for the geometry streaming LOD opt-in flag. Create_renderer. */
+        OVRTX_CONFIG_ENABLE_GEOMETRY_STREAMING_LOD,
+        /** If false, disables Sensor Processing Graphs (SPG), default: enabled.
+         * This is a global setting, applying to all active renderer instances. */
+        OVRTX_CONFIG_ENABLE_SPG,
         OVRTX_CONFIG_BOOL_COUNT
     } ovrtx_config_bool_t;
 
@@ -568,10 +867,22 @@ extern "C"
         OVRTX_CONFIG_STRING_COUNT
     } ovrtx_config_string_t;
 
-    /** Int64 config keys (reserved for future use). Value type: int64_t. */
+    /** Int64 config keys. Value type: int64_t. Used at create_renderer. */
     typedef enum ovrtx_config_int64_t
     {
-        OVRTX_CONFIG_INT64_COUNT
+        /** Selection outline width in pixels. Valid range 0..15 (15 is the underlying RTX outline pipeline cap).
+         *  Init-time only; changing requires renderer recreation. Default: 2 (set by the underlying renderer). */
+        OVRTX_CONFIG_SELECTION_OUTLINE_WIDTH,
+        /** Selection-outline interior (fill) mode. Value type: @ref ovrtx_selection_fill_mode_t.
+         *  Out-of-range values are clamped by the renderer.
+         *  Init-time only; changing requires renderer recreation.
+         *  Default: @ref OVRTX_SELECTION_FILL_MODE_GLOBAL. */
+        OVRTX_CONFIG_SELECTION_FILL_MODE,
+        /** Motion BVH mode. Value type: @ref ovrtx_motion_bvh_t.
+         *  Init-time only; changing requires renderer recreation.
+         *  When not specified, defaults to @ref OVRTX_MOTION_BVH_DISABLE. */
+        OVRTX_CONFIG_MOTION_BVH,
+        OVRTX_CONFIG_INT64_COUNT = 4
     } ovrtx_config_int64_t;
 
     /** Uint64 config keys (reserved for future use). Value type: uint64_t. */
@@ -628,10 +939,11 @@ extern "C"
         size_t entry_count;
     } ovrtx_config_t;
 
+    /** @} */ // end of ovrtx_config_types
+
+    /** @ingroup ovrtx_sync_types */
     /** @ref ovrtx_timeout_t constant for infinity (i.e. block indefinitely) */
     static const ovrtx_timeout_t ovrtx_timeout_infinite = { (size_t)-1 }; /* .time_out_ns = would require C++20 */
-
-    /** @} */ // end of ovrtx_sensor_types
 
 #ifdef __cplusplus
 }

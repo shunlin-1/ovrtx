@@ -13,11 +13,16 @@
 #define OVRTX_CONFIG_H
 
 #include "ovrtx_types.h"
+#include <ovx/config_tokens.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+/** @defgroup ovrtx_config_helpers Configuration helper functions
+ *  @{
+ */
 
 /**
  * Build a config entry for a boolean setting.
@@ -49,12 +54,29 @@ static inline ovrtx_config_entry_t ovrtx_config_entry_string(ovrtx_config_string
 }
 
 /**
+ * Build a config entry for an int64 setting.
+ * @param key Config key (e.g. OVRTX_CONFIG_SELECTION_OUTLINE_WIDTH). Must be from ovrtx_config_int64_t.
+ * @param value Stored by value in the entry.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_int(ovrtx_config_int64_t key, int64_t value)
+{
+    ovrtx_config_entry_t entry;
+    entry.key_type = OVRTX_CONFIG_KEY_TYPE_INT64;
+    entry.key.int64_key = key;
+    entry.value.int_value = value;
+    return entry;
+}
+
+/**
  * Configure the OVRTX "binary package root" directory.
  *
  * This is used by the loader to locate the renderer shared library and required runtime resources.
  * If not provided, the loader chooses a default based on the loader's location.
  *
  * @param path The root directory path. path.ptr must remain valid until the API call that consumes the config returns.
+ *             The path may contain the @ref OVX_CONFIG_EXECUTABLE_DIR_TOKEN token, which the loader
+ *             substitutes with the absolute directory of the running executable
+ *             (e.g. OVX_CONFIG_EXECUTABLE_DIR_TOKEN "/ovrtx/bin").
  */
 static inline ovrtx_config_entry_t ovrtx_config_entry_binary_package_root_path(ovx_string_t path)
 {
@@ -93,17 +115,6 @@ static inline ovrtx_config_entry_t ovrtx_config_entry_read_gpu_transforms(bool r
 }
 
 /**
- * Configure partial frame output.
- *
- * When enabled, the renderer will output partial frames for incremental sensors.
- * When disabled, the renderer will only output full frames for incremental sensors.
- */
-static inline ovrtx_config_entry_t ovrtx_config_entry_output_partial_frames(bool partial_frames)
-{
-    return ovrtx_config_entry_bool(OVRTX_CONFIG_OUTPUT_PARTIAL_FRAMES, partial_frames);
-}
-
-/**
  * Keep the renderer system alive after all instances are destroyed.
  *
  * When enabled, the shared RendererWrapperSystem (common GPU resources) is not destroyed
@@ -127,6 +138,43 @@ static inline ovrtx_config_entry_t ovrtx_config_entry_use_vulkan(bool use_vulkan
 }
 
 /**
+ * Build a config entry for the geometry streaming opt-in flag.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_enable_geometry_streaming(bool enable_geometry_streaming)
+{
+    return ovrtx_config_entry_bool(OVRTX_CONFIG_ENABLE_GEOMETRY_STREAMING, enable_geometry_streaming);
+}
+
+/**
+ * Build a config entry for the geometry streaming LOD opt-in flag.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_enable_geometry_streaming_lod(
+    bool enable_geometry_streaming_lod)
+{
+    return ovrtx_config_entry_bool(OVRTX_CONFIG_ENABLE_GEOMETRY_STREAMING_LOD, enable_geometry_streaming_lod);
+}
+
+/**
+ * Build a config entry for enabling/disabling RTX Sensor Processing Graphs (enabled by default).
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_enable_spg(bool enable_spg)
+{
+    return ovrtx_config_entry_bool(OVRTX_CONFIG_ENABLE_SPG, enable_spg);
+}
+
+/**
+ * Configure motion BVH (ray-traced motion) behavior for sensor pipelines.
+ *
+ * @param mode One of @ref ovrtx_motion_bvh_t. Must be set before the first
+ *             @ref ovrtx_create_renderer call; changing the value requires recreating
+ *             the renderer. When not provided, defaults to @ref OVRTX_MOTION_BVH_DISABLE.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_motion_bvh(ovrtx_motion_bvh_t mode)
+{
+    return ovrtx_config_entry_int(OVRTX_CONFIG_MOTION_BVH, (int64_t)mode);
+}
+
+/**
  * Configure log file path for carb logging.
  *
  * This setting should be passed to ovrtx_initialize(). The log file is created when the first
@@ -135,7 +183,7 @@ static inline ovrtx_config_entry_t ovrtx_config_entry_use_vulkan(bool use_vulkan
  * The path may contain the ${start_timestamp} token which will be replaced with the startup
  * timestamp in YYYYMMDD_HHMMSS format (e.g., "myapp_${start_timestamp}.log").
  *
- * If not specified, defaults to: <app_directory>/ovrtx_${start_timestamp}.log
+ * If not specified, defaults to: \<app_directory\>/ovrtx_${start_timestamp}.log
  *
  * @param path Log file path. path.ptr must remain valid until the API call that consumes the config returns.
  */
@@ -171,6 +219,44 @@ static inline ovrtx_config_entry_t ovrtx_config_entry_active_cuda_gpus(ovx_strin
 {
     return ovrtx_config_entry_string(OVRTX_CONFIG_ACTIVE_CUDA_GPUS, cuda_gpus);
 }
+
+/**
+ * Enable the selection outline postprocessing pass.
+ *
+ * When enabled, prims marked with a non-zero selection group (via ovrtx_set_selection_outline_group)
+ * will have a visible outline drawn in the rendered image.
+ * When disabled (default), selection groups are tracked but no outline is rendered.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_selection_outline_enabled(bool enabled)
+{
+    return ovrtx_config_entry_bool(OVRTX_CONFIG_SELECTION_OUTLINE_ENABLED, enabled);
+}
+
+/**
+ * Configure the selection outline width in pixels.
+ *
+ * Init-time only; changing requires renderer recreation. Valid range is 0..15
+ * (the underlying RTX outline pipeline cap). Out-of-range values are clamped
+ * by the renderer.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_selection_outline_width(int width)
+{
+    return ovrtx_config_entry_int(OVRTX_CONFIG_SELECTION_OUTLINE_WIDTH, (int64_t)width);
+}
+
+/**
+ * Configure the selection-outline fill (interior) mode.
+ *
+ * Init-time only; changing requires renderer recreation.
+ * @see ovrtx_selection_fill_mode_t for valid values.
+ */
+static inline ovrtx_config_entry_t ovrtx_config_entry_selection_fill_mode(ovrtx_selection_fill_mode_t mode)
+{
+    return ovrtx_config_entry_int(OVRTX_CONFIG_SELECTION_FILL_MODE, (int64_t)mode);
+}
+
+/** @} */ // end of ovrtx_config_helpers
+
 #ifdef __cplusplus
 }
 #endif
