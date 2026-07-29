@@ -15,6 +15,7 @@ run details. The table below is a one-line orientation.
 |---|---|---|
 | [`python/agv/`](python/agv/) | AGV scene viewer (PySide6 + QML) with click-to-toggle Neon / Xray / Xray-Light material modes | Y-up cm-units; sidecar USD generated at launch; pick via `pxr` subprocess. `uv run main.py`. |
 | [`python/neon-robot-bim/`](python/neon-robot-bim/) | Earlier prototype — Qt/QML BIM-style overlay UI (glass / neumorph / hover / drag), `agv` is the cleaned successor | Stage-1 placeholder backdrop; AGV picked up the ovrtx-rendered backdrop in Stage 2. |
+| [`python/commercial-showroom/`](python/commercial-showroom/) | Renders the Commercial_NVD ArchVis furniture pack (`assets/Commercial_NVD@10013/`) by generating a sidecar stage | Z-up cm-units; the pack is a prop library with no camera/lights/RenderProduct. `@` in the pack dir name forces `@@@...@@@` asset paths. Rendering unverified (pack is 5.7 GB). `uv run main.py --list`. |
 
 ## Hybrid (C++ UI + Python helpers)
 
