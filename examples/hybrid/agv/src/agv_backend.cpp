@@ -170,7 +170,7 @@ bool try_write_omni_xform(ovrtx_renderer_t* renderer,
 }
 // [/snippet:fk-write-omni-xform]
 
-ovrtx_rendered_output_handle_t find_ldr_color(
+ovrtx_render_var_output_handle_t find_ldr_color(
     ovrtx_render_product_set_outputs_t const& outputs) {
     for (size_t i = 0; i < outputs.output_count; ++i) {
         const auto& product = outputs.outputs[i];
@@ -311,13 +311,13 @@ void AgvBackend::runWorker() {
     // which pulls in the source's entire top-level prim tree (so we
     // get /Environment with Test.usda's lights). The sidecar itself
     // declares /AgvCamera and /Render/OmniverseKit/HydraTextures/AgvViewport.
-    ovrtx_usd_input_t usd_in{};
-    usd_in.usd_file_path = {sidecar_path_.c_str(),
-                            sidecar_path_.size()};
-    ovrtx_usd_handle_t source_handle{};
+    // 0.3 replaced ovrtx_add_usd()/ovrtx_usd_input_t with explicit
+    // root-layer vs. reference APIs. The sidecar *is* the root layer, so
+    // this is open_usd_from_file (no prefix, no removable handle).
+    ovx_string_t sidecar_str{sidecar_path_.c_str(), sidecar_path_.size()};
     ovrtx_enqueue_result_t enq =
-        ovrtx_add_usd(renderer, usd_in, {"", 0}, &source_handle);
-    if (check_ovrtx(enq, "add_usd(sidecar)")) {
+        ovrtx_open_usd_from_file(renderer, sidecar_str);
+    if (check_ovrtx(enq, "open_usd_from_file(sidecar)")) {
         ovrtx_destroy_renderer(renderer); return;
     }
     ovrtx_op_wait_result_t wait{};
@@ -412,11 +412,20 @@ def "Render"
     }
 }
 )USDA";
-        ovrtx_usd_input_t cam_in{};
-        cam_in.usd_layer_content = {kCamRenderUsda, std::strlen(kCamRenderUsda)};
-        ovrtx_usd_handle_t cam_handle{};
-        auto cam_enq = ovrtx_add_usd(renderer, cam_in, {"", 0}, &cam_handle);
-        if (check_ovrtx(cam_enq, "add_usd(camera+render)")) {
+        // NOTE (0.2 -> 0.3 migration): this path is still #if 0'd and would
+        // need reworking before it can be re-enabled. ovrtx_add_usd() with an
+        // empty path prefix used to splice inline USDA in at *root* level.
+        // 0.3 removed that: add_usd_reference_from_string() always nests the
+        // content under a caller-supplied prefix prim, which would move
+        // /AgvCamera and /Render/... off the root paths the renderer requires
+        // (see the hardcoded /Render/OmniverseKit/HydraTextures scope above).
+        // The supported way to author root-level prims at runtime is
+        // open_usd_from_string() on a root layer that sublayers the sidecar —
+        // i.e. exactly what write_sidecar() already does. Kept compiling here
+        // only so the dead branch does not reference a deleted symbol.
+        ovx_string_t cam_str{kCamRenderUsda, std::strlen(kCamRenderUsda)};
+        auto cam_enq = ovrtx_open_usd_from_string(renderer, cam_str);
+        if (check_ovrtx(cam_enq, "open_usd_from_string(camera+render)")) {
             ovrtx_destroy_renderer(renderer); return;
         }
         while (ovrtx_wait_op(renderer, cam_enq.op_index,
@@ -740,19 +749,28 @@ def "Render"
         if (ldr_h != -1) {
             ovrtx_map_output_description_t map_desc{};
             map_desc.device_type = OVRTX_MAP_DEVICE_TYPE_CPU;
-            ovrtx_rendered_output_t rendered{};
-            auto map_r = ovrtx_map_rendered_output(
+            ovrtx_render_var_output_t rendered{};
+            auto map_r = ovrtx_map_render_var_output(
                 renderer, ldr_h, &map_desc, ovrtx_timeout_infinite, &rendered);
 
-            if (!check_ovrtx(map_r, "map_rendered_output")) {
-                const DLTensor& t = rendered.buffer.dl;
-                int height = static_cast<int>(t.shape[0]);
-                int width  = static_cast<int>(t.shape[1]);
-                provider_->update(static_cast<const std::uint8_t*>(t.data),
-                                  width, height);
+            if (!check_ovrtx(map_r, "map_render_var_output")) {
+                // 0.3 replaced the single `buffer` with a tensors[] array so
+                // composite render vars (lidar/radar PointCloud) can carry
+                // several named tensors. LdrColor is single-tensor.
+                if (rendered.num_tensors == 1) {
+                    const DLTensor& t = *rendered.tensors[0].dl;
+                    int height = static_cast<int>(t.shape[0]);
+                    int width  = static_cast<int>(t.shape[1]);
+                    provider_->update(static_cast<const std::uint8_t*>(t.data),
+                                      width, height);
+                } else {
+                    std::fprintf(stderr,
+                                 "[backend] unexpected LdrColor tensor count: %zu\n",
+                                 rendered.num_tensors);
+                }
 
                 ovrtx_cuda_sync_t no_sync{};
-                ovrtx_unmap_rendered_output(renderer, rendered.map_handle, no_sync);
+                ovrtx_unmap_render_var_output(renderer, rendered.map_handle, no_sync);
 
                 int next = frame_counter_.fetch_add(1) + 1;
                 // QueuedConnection across threads is automatic when the

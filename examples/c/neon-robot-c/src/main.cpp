@@ -102,7 +102,7 @@ static void record_rendering_state(CommandBuffer& cmd,
 // Returns the output handle and sets the output_type
 static auto find_color_output(ovrtx_render_product_set_outputs_t const& outputs,
                               OutputType& output_type)
-    -> ovrtx_rendered_output_handle_t;
+    -> ovrtx_render_var_output_handle_t;
 
 // =========================================================================
 // Neon ring animation: 6 SphereLights orbit at constant chest height around
@@ -207,21 +207,17 @@ int main(int argc, char* argv[]) {
 
     std::cerr << "Loading USD scene: " << usd_file_path << "\n";
 
-    // Load USD file
-    ovrtx_usd_input_t usd_input = {};
-    usd_input.usd_file_path.ptr = usd_file_path.c_str();
-    usd_input.usd_file_path.length = usd_file_path.size();
-
-    ovx_string_t prefix = {};
-    prefix.ptr = "";
-    prefix.length = 0;
+    // Load USD file. 0.3 split ovrtx_add_usd() into root-layer vs. reference
+    // APIs; this is the scene's root layer, so it becomes open_usd_from_file.
+    ovx_string_t usd_file = {};
+    usd_file.ptr = usd_file_path.c_str();
+    usd_file.length = usd_file_path.size();
 
     // Loading USD is asynchronous in ovrtx, so we enqueue then wait for
     // completion.
-    ovrtx_usd_handle_t usd_handle = 0;
     ovrtx_enqueue_result_t enqueue_result =
-        ovrtx_add_usd(renderer, usd_input, prefix, &usd_handle);
-    if (check_and_print_error(enqueue_result, "add_usd")) {
+        ovrtx_open_usd_from_file(renderer, usd_file);
+    if (check_and_print_error(enqueue_result, "open_usd_from_file")) {
         ovrtx_destroy_renderer(renderer);
         return 1;
     }
@@ -307,7 +303,7 @@ int main(int argc, char* argv[]) {
 
     // Find color output (prefer HdrColor, fall back to LdrColor)
     OutputType output_type;
-    ovrtx_rendered_output_handle_t color_output_handle =
+    ovrtx_render_var_output_handle_t color_output_handle =
         find_color_output(outputs, output_type);
     if (color_output_handle == 0) {
         std::cerr << "No color output found (HdrColor or LdrColor)\n";
@@ -323,24 +319,37 @@ int main(int argc, char* argv[]) {
     map_desc.device_type = OVRTX_MAP_DEVICE_TYPE_CUDA_ARRAY;
     map_desc.sync_stream = 0;
 
-    ovrtx_rendered_output_t rendered_output = {};
-    result = ovrtx_map_rendered_output(renderer,
+    ovrtx_render_var_output_t rendered_output = {};
+    result = ovrtx_map_render_var_output(renderer,
                                        color_output_handle,
                                        &map_desc,
                                        ovrtx_timeout_infinite,
                                        &rendered_output);
-    if (check_and_print_error(result, "map_rendered_output")) {
+    if (check_and_print_error(result, "map_render_var_output")) {
         ovrtx_destroy_results(renderer, step_result_handle);
         ovrtx_destroy_renderer(renderer);
         return 1;
     }
 
-    DLTensor const& dl = rendered_output.buffer.dl;
+    // 0.3 replaced the single `buffer` field with a tensors[] array so
+    // composite render vars can carry several named tensors. Color outputs
+    // are single-tensor.
+    if (rendered_output.num_tensors != 1) {
+        std::fprintf(stderr,
+                     "Expected 1 tensor for the color output, got %zu\n",
+                     rendered_output.num_tensors);
+        ovrtx_unmap_render_var_output(
+            renderer, rendered_output.map_handle, ovrtx_cuda_sync_t{});
+        ovrtx_destroy_results(renderer, step_result_handle);
+        ovrtx_destroy_renderer(renderer);
+        return 1;
+    }
+    DLTensor const& dl = (*rendered_output.tensors[0].dl);
     int tex_width = static_cast<int>(dl.shape[1]);
     int tex_height = static_cast<int>(dl.shape[0]);
 
     // Unmap and destroy initial step results (no copy, so no sync needed)
-    result = ovrtx_unmap_rendered_output(
+    result = ovrtx_unmap_render_var_output(
         renderer, rendered_output.map_handle, ovrtx_cuda_sync_t{});
     if (check_and_print_error(result, "unmap_rendered_output")) {
         ovrtx_destroy_results(renderer, step_result_handle);
@@ -492,7 +501,7 @@ int main(int argc, char* argv[]) {
 
         // ovrtx step state
         ovrtx_step_result_handle_t current_step_result = 0;
-        ovrtx_rendered_output_map_handle_t current_map_handle = 0;
+        ovrtx_render_var_output_map_handle_t current_map_handle = 0;
         bool has_mapped_output = false;
 
         // =====================================================================
@@ -537,12 +546,12 @@ int main(int argc, char* argv[]) {
                 return 2;
             }
 
-            result = ovrtx_map_rendered_output(renderer,
+            result = ovrtx_map_render_var_output(renderer,
                                                color_output_handle,
                                                &map_desc,
                                                ovrtx_timeout_infinite,
                                                &rendered_output);
-            if (check_and_print_error(result, "map_rendered_output")) {
+            if (check_and_print_error(result, "map_render_var_output")) {
                 ovrtx_destroy_results(renderer, current_step_result);
                 cuda_cleanup();
                 glfwDestroyWindow(window);
@@ -554,14 +563,28 @@ int main(int argc, char* argv[]) {
             current_map_handle = rendered_output.map_handle;
             has_mapped_output = true;
 
-            CUarray cuda_array =
-                reinterpret_cast<CUarray>(rendered_output.buffer.dl.data);
+            if (rendered_output.num_tensors != 1) {
+                std::fprintf(stderr,
+                             "Expected 1 tensor for the color output, got %zu\n",
+                             rendered_output.num_tensors);
+                ovrtx_unmap_render_var_output(
+                    renderer, current_map_handle, ovrtx_cuda_sync_t{});
+                ovrtx_destroy_results(renderer, current_step_result);
+                cuda_cleanup();
+                glfwDestroyWindow(window);
+                glfwTerminate();
+                ovrtx_destroy_renderer(renderer);
+                return 1;
+            }
+
+            DLTensor const& out_dl = *rendered_output.tensors[0].dl;
+            CUarray cuda_array = reinterpret_cast<CUarray>(out_dl.data);
+            // 0.3 hoisted cuda_sync from the per-buffer struct to the output,
+            // where a single sync now covers every tensor.
             CUevent wait_event = reinterpret_cast<CUevent>(
-                rendered_output.buffer.cuda_sync.wait_event);
-            int out_width =
-                static_cast<int>(rendered_output.buffer.dl.shape[1]);
-            int out_height =
-                static_cast<int>(rendered_output.buffer.dl.shape[0]);
+                rendered_output.cuda_sync.wait_event);
+            int out_width = static_cast<int>(out_dl.shape[1]);
+            int out_height = static_cast<int>(out_dl.shape[0]);
 
             // ovrtx may signal a CUDA event when its output is ready; wait on
             // that event in our stream before issuing the interop copy.
@@ -578,7 +601,7 @@ int main(int argc, char* argv[]) {
             ovrtx_cuda_sync_t copy_done_sync = {};
             copy_done_sync.wait_event =
                 reinterpret_cast<uintptr_t>(cuda_copy_done_event);
-            result = ovrtx_unmap_rendered_output(
+            result = ovrtx_unmap_render_var_output(
                 renderer, current_map_handle, copy_done_sync);
             if (check_and_print_error(result, "unmap_rendered_output")) {
                 ovrtx_destroy_results(renderer, current_step_result);
@@ -847,12 +870,12 @@ int main(int argc, char* argv[]) {
                     find_color_output(outputs, frame_output_type);
 
                 // [snippet:map-rendered-output-cuda-array]
-                result = ovrtx_map_rendered_output(renderer,
+                result = ovrtx_map_render_var_output(renderer,
                                                    color_output_handle,
                                                    &map_desc,
                                                    ovrtx_timeout_infinite,
                                                    &rendered_output);
-                if (check_and_print_error(result, "map_rendered_output")) {
+                if (check_and_print_error(result, "map_render_var_output")) {
                     ovrtx_destroy_results(renderer, current_step_result);
                     cuda_cleanup();
                     glfwDestroyWindow(window);
@@ -864,14 +887,28 @@ int main(int argc, char* argv[]) {
                 current_map_handle = rendered_output.map_handle;
                 has_mapped_output = true;
 
-                CUarray cuda_array =
-                    reinterpret_cast<CUarray>(rendered_output.buffer.dl.data);
+                if (rendered_output.num_tensors != 1) {
+                    std::fprintf(stderr,
+                                 "Expected 1 tensor for the color output, got %zu\n",
+                                 rendered_output.num_tensors);
+                    ovrtx_unmap_render_var_output(
+                        renderer, current_map_handle, ovrtx_cuda_sync_t{});
+                    ovrtx_destroy_results(renderer, current_step_result);
+                    cuda_cleanup();
+                    glfwDestroyWindow(window);
+                    glfwTerminate();
+                    ovrtx_destroy_renderer(renderer);
+                    return 1;
+                }
+
+                DLTensor const& out_dl = *rendered_output.tensors[0].dl;
+                CUarray cuda_array = reinterpret_cast<CUarray>(out_dl.data);
+                // 0.3 hoisted cuda_sync from the per-buffer struct to the
+                // output, where a single sync covers every tensor.
                 CUevent wait_event = reinterpret_cast<CUevent>(
-                    rendered_output.buffer.cuda_sync.wait_event);
-                int out_width =
-                    static_cast<int>(rendered_output.buffer.dl.shape[1]);
-                int out_height =
-                    static_cast<int>(rendered_output.buffer.dl.shape[0]);
+                    rendered_output.cuda_sync.wait_event);
+                int out_width = static_cast<int>(out_dl.shape[1]);
+                int out_height = static_cast<int>(out_dl.shape[0]);
 
                 // Ensure ovrtx has finished producing the mapped CUDA array
                 // before launching the copy into external Vulkan memory.
@@ -892,7 +929,7 @@ int main(int argc, char* argv[]) {
                 ovrtx_cuda_sync_t copy_done_sync = {};
                 copy_done_sync.wait_event =
                     reinterpret_cast<uintptr_t>(cuda_copy_done_event);
-                result = ovrtx_unmap_rendered_output(
+                result = ovrtx_unmap_render_var_output(
                     renderer, current_map_handle, copy_done_sync);
                 // [/snippet:map-rendered-output-cuda-array]
                 if (check_and_print_error(result, "unmap_rendered_output")) {
@@ -1408,9 +1445,9 @@ static void record_rendering_state(CommandBuffer& cmd,
 // Returns the output handle and sets the output_type
 static auto find_color_output(ovrtx_render_product_set_outputs_t const& outputs,
                               OutputType& output_type)
-    -> ovrtx_rendered_output_handle_t {
-    ovrtx_rendered_output_handle_t hdr_handle = 0;
-    ovrtx_rendered_output_handle_t ldr_handle = 0;
+    -> ovrtx_render_var_output_handle_t {
+    ovrtx_render_var_output_handle_t hdr_handle = 0;
+    ovrtx_render_var_output_handle_t ldr_handle = 0;
 
     for (size_t i = 0; i < outputs.output_count; ++i) {
         ovrtx_render_product_output_t const& product_output =

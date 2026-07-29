@@ -2,7 +2,7 @@
 
 Live, interactive Vulkan-window viewer for the `robot-ovrtx` scene with a rig of animated neon `SphereLight`s orbiting the robot. Forked from `vulkan-interop` — same CUDA-Vulkan interop pipeline, mouse-orbit camera, and per-frame timing prints — with two additions:
 
-1. After loading the robot scene, an in-memory USDA layer containing six saturated `SphereLight`s is injected via `ovrtx_add_usd` using `usd_layer_content` (no temp file needed).
+1. The scene is opened with `ovrtx_open_usd_from_file` and supplies six saturated `SphereLight`s at `/World/Lights/Neon_<i>`; the app only mutates their transforms.
 2. Each render step, the lights' `omni:xform` transforms are recomputed (orbital path + vertical bob) and pushed via `ovrtx_set_xform_mat` — a synchronous CPU-side write, fast enough for a handful of lights.
 
 Mouse-drag to orbit the camera. Scroll to zoom. The lights keep moving regardless of camera input.

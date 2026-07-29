@@ -148,14 +148,14 @@ This directory contains example projects demonstrating various features of ovrtx
         <b>Neon Robot</b>
       </a>
       <br>
-      <sub>Loads the robot-ovrtx scene and injects an animated rig of UsdLux SphereLights in saturated neon colors that orbit the robot, demonstrating per-frame light-pose updates via add_usd_layer + bind_attribute.</sub>
+      <sub>Loads the robot-ovrtx scene and injects an animated rig of UsdLux SphereLights in saturated neon colors that orbit the robot, demonstrating per-frame light-pose updates via add_usd_reference_from_string + bind_attribute.</sub>
     </td>
     <td align="center" width="50%">
       <a href="c/neon-robot-c/">
         <b>Neon Robot (C)</b>
       </a>
       <br>
-      <sub>Fork of Vulkan Interop that injects an animated rig of UsdLux SphereLights into the robot scene via ovrtx_add_usd with inline USDA, then drives their poses each frame with ovrtx_set_xform_mat. Live mouse-orbit window with moving neon lights.</sub>
+      <sub>Fork of Vulkan Interop that opens a robot scene carrying a rig of UsdLux SphereLights via ovrtx_open_usd_from_file, then drives their poses each frame with ovrtx_set_xform_mat. Live mouse-orbit window with moving neon lights.</sub>
     </td>
   </tr>
 </table>

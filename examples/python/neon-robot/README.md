@@ -31,9 +31,9 @@ The first time the example is run, driver shader compilation will be performed a
 
 ## How it works
 
-1. `renderer.add_usd(ROBOT_SCENE_URL)` loads the robot scene from S3.
+1. `renderer.open_usd(ROBOT_SCENE_URL)` loads the robot scene from S3 as the active root layer.
 2. `generate_neon_rig_usda()` builds an in-memory USDA layer containing `N` `SphereLight` prims arranged in a ring at waist height. Each light gets a saturated neon color from a fixed palette.
-3. `renderer.add_usd_layer(rig_usda, path_prefix="/World/NeonRig")` injects the rig into the live stage without modifying the source.
+3. `renderer.add_usd_reference_from_string(rig_usda, "/World/NeonRig")` injects the rig into the live stage without modifying the source, returning a handle that `renderer.remove_usd()` uses during teardown.
 4. `renderer.bind_attribute(..., attribute_name="omni:xform", shape=(4,4), dtype="float64")` opens a zero-copy binding to every light's flattened world matrix.
 5. The animation loop maps the binding, runs the `animate_lights` Warp kernel to compute new transforms (orbit + vertical bob with phase offset per light), unmaps to flush writes to Fabric, then steps the renderer.
 
