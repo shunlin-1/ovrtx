@@ -642,7 +642,9 @@ class OvrtxBackend(QObject):
         config = RendererConfig()
         renderer = Renderer(config)
         print(f"[ovrtx-worker] Loading {self._sidecar_path}")
-        renderer.add_usd(str(self._sidecar_path))
+        # The sidecar is the root layer (it references the AGV scene itself),
+        # so this is open_usd rather than add_usd_reference.
+        renderer.open_usd(str(self._sidecar_path))
 
         try:
             camera_binding = renderer.bind_attribute(
@@ -684,7 +686,9 @@ class OvrtxBackend(QObject):
                         continue
                     with frame.render_vars["LdrColor"].map(
                             device=Device.CPU) as mapping:
-                        arr = np.from_dlpack(mapping.tensor)
+                        # DLPack directly off the mapping — MappedRenderVar
+                        # .tensor is deprecated for single-tensor render vars.
+                        arr = np.from_dlpack(mapping)
                         self._provider.update(arr)
                     self._frame += 1
                     self.frameChanged.emit(self._frame)

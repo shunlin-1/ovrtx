@@ -47,7 +47,9 @@ def get_stage_debug_dump(renderer: Renderer) -> str:
         render_products={"ovrtx_debug_dump_stage"}, delta_time=0.0)
     frame = products["ovrtx_debug_dump_stage"].frames[0]
     with frame.render_vars["debug"].map(device=Device.CPU) as mapping:
-        return mapping.tensor.to_bytes().decode("utf-8")
+        # DLPack directly off the mapping — MappedRenderVar.tensor (and its
+        # .to_bytes()) is deprecated for single-tensor render vars.
+        return np.from_dlpack(mapping).tobytes().decode("utf-8")
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -160,7 +162,7 @@ def main() -> None:
         raise SystemExit(f"USD not found: {args.usd}")
 
     renderer = Renderer()
-    renderer.add_usd(str(args.usd))
+    renderer.open_usd(str(args.usd))
 
     # One-time binding — cached for every subsequent write.
     binding = renderer.bind_attribute(

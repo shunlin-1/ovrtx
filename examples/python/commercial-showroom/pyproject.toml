@@ -1,0 +1,15 @@
+[project]
+name = "commercial-showroom"
+version = "0.1.0"
+description = "Render the Commercial_NVD ArchVis asset pack with ovrtx via a generated sidecar stage."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "numpy==2.2.6",
+    "ovrtx==0.4.0.346409",
+    "Pillow>=11",
+    # NOTE: usd-core is intentionally NOT a dependency. ovrtx bundles its
+    # own USD libs and refuses to load if usd-core is installed in the
+    # same env. Asset inspection lives in asset_bbox.py, which uv runs in
+    # its own ephemeral venv via PEP 723 inline metadata.
+]

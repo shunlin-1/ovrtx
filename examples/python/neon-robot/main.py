@@ -13,7 +13,8 @@
 
 Demonstrates:
 - Loading a remote USD scene (the same robot used by examples/c/vulkan-interop)
-- Injecting an extra UsdLux light rig via add_usd_layer without touching the source
+- Injecting an extra UsdLux light rig via add_usd_reference_from_string without
+  touching the source
 - Per-frame light-pose updates via bind_attribute/map_attribute (zero-copy)
 - GPU-accelerated motion with a Warp kernel
 
@@ -66,8 +67,9 @@ NEON_COLORS = [
 def generate_neon_rig_usda(num_lights: int) -> str:
     """Generate a UsdLux SphereLight rig arranged in a ring at orbit height.
 
-    The defaultPrim is "NeonRig"; pass path_prefix="/World/NeonRig" to
-    add_usd_layer so the rig hangs off the world stage alongside the robot.
+    The defaultPrim is "NeonRig"; pass "/World/NeonRig" as the prefix path to
+    add_usd_reference_from_string so the rig hangs off the world stage
+    alongside the robot.
     """
     parts = [
         '#usda 1.0\n(\n    defaultPrim = "NeonRig"\n)\n\n',
@@ -166,12 +168,13 @@ def run_animation(
     print(f"Simulation: {NUM_SIM_STEPS} steps @ {SIM_HZ} Hz ({SIM_DURATION}s)")
 
     # [snippet:bind-and-animate]
-    # 1. Load the remote robot scene.
-    renderer.add_usd(ROBOT_SCENE_URL)
+    # 1. Load the remote robot scene as the active root layer.
+    renderer.open_usd(ROBOT_SCENE_URL)
 
-    # 2. Inject the neon rig as a sublayer rooted under /World/NeonRig.
+    # 2. Inject the neon rig as removable referenced content under
+    #    /World/NeonRig. The returned handle can be passed to remove_usd().
     rig_usda = generate_neon_rig_usda(num_lights)
-    renderer.add_usd_layer(rig_usda, path_prefix="/World/NeonRig")
+    rig_handle = renderer.add_usd_reference_from_string(rig_usda, "/World/NeonRig")
 
     # 3. Bind omni:xform on every light for zero-copy per-frame updates.
     light_paths = [f"/World/NeonRig/Neon_{i}" for i in range(num_lights)]
@@ -223,7 +226,9 @@ def run_animation(
                 if "LdrColor" not in frame.render_vars:
                     continue
                 with frame.render_vars["LdrColor"].map(device=device) as mapping:
-                    np_array = wp.from_dlpack(mapping.tensor).numpy()
+                    # DLPack directly off the mapping — MappedRenderVar.tensor
+                    # is deprecated for single-tensor render vars.
+                    np_array = wp.from_dlpack(mapping).numpy()
                     if save_png:
                         Image.fromarray(np_array).save(
                             OUTPUT_DIR / f"neon_robot_{rendered_frame_count:03d}.png"
@@ -233,6 +238,9 @@ def run_animation(
                         rr.log("render/LdrColor", rr.Image(np_array))
 
     light_binding.unbind()
+    # The rig was added as removable referenced content, so it can be
+    # detached without reloading the root layer.
+    renderer.remove_usd(rig_handle)
     # [/snippet:bind-and-animate]
 
     print(
