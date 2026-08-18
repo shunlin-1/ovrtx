@@ -44,6 +44,17 @@ de-risk a single design question.
 |---|---|
 | [`web/ui-demo/`](web/ui-demo/) | Single-file HTML exercising glassmorphism / neumorphism / hover / drag on a `transparent` background — the test page the CEF / Ultralight integrations are designed to display on top of an ovrtx scene. |
 
+## Streaming and XR notes
+
+Written 2026-08-18 while spiking NVIDIA's streaming and XR libraries against
+this fork. Notes only — the demo code lives outside the repo.
+
+| Doc | What it covers |
+|---|---|
+| [`../notes/ovstream-xr/README.md`](../notes/ovstream-xr/README.md) | Overview: ovrtx + [ovstream](https://github.com/NVIDIA-Omniverse/ovstream) + CloudXR, and which answers two open items in `Omniverse_Kit_WebUI_架構決策.md` |
+| [`../notes/ovstream-xr/ovrtx-stream-demo.md`](../notes/ovstream-xr/ovrtx-stream-demo.md) | Streaming any USD over WebRTC; measured render costs; the Kit-viewport-RenderProduct trap in `agv/Test.usda` |
+| [`../notes/ovstream-xr/cloudxr-and-openxr.md`](../notes/ovstream-xr/cloudxr-and-openxr.md) | Why the streamer *is* the OpenXR runtime; CloudXR container wiring; the XR frame budget, measured |
+
 ## How they relate
 
 ```
