@@ -1,9 +1,9 @@
-> **These are notes, not code.** They were written while spiking ovstream
-> (WebRTC streaming) and CloudXR (XR) against this fork on 2026-08-18. The
-> working demo they describe lives outside this repo, in `~/Desktop/ovlibs/`
-> on the dev machine — `demo/ovrtx-stream/{main.py,scene_probe.py}` — and is
-> **not committed here**. Everything below is reproducible from the commands
-> in these files.
+> **Notes from spiking ovstream (WebRTC streaming) and CloudXR (XR) against
+> this fork on 2026-08-18.** The code they describe is committed alongside:
+> [`examples/python/ovrtx-stream/`](../../examples/python/ovrtx-stream/) and
+> [`examples/c/openxr-stub/`](../../examples/c/openxr-stub/). On the dev
+> machine these sat in `~/Desktop/ovlibs/` next to clones of ovrtx and
+> ovstream, which is the layout described below.
 
 # ovlibs — NVIDIA Omniverse libraries workspace
 
@@ -51,7 +51,7 @@ implements.
 ## `demo/ovrtx-stream` — the demo
 
 Streams any USD scene, generating the camera + RenderProduct + lights when the
-scene has none. See its [README](ovrtx-stream-demo.md).
+scene has none. See its [README](../../examples/python/ovrtx-stream/README.md).
 
 **Verified working**: browser client connected over WebRTC, path-traced frames
 displayed, left-drag orbit driving the ovrtx camera. ~25 FPS idle / ~11 FPS

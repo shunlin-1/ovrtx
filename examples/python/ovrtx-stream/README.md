@@ -31,7 +31,7 @@ RenderProduct, and no lights at all.
 
 ```bash
 uv run main.py                                        # stock robot scene
-uv run main.py --usd ../../ovrtx/examples/python/agv/Test.usda --serve-client
+uv run main.py --usd ../agv/Test.usda --serve-client
 uv run main.py --usd scene.usd --transport webrtc --transport rtsp:8554
 uv run main.py --usd scene.usd --res 2560x1440 --fps 30
 ```
@@ -39,7 +39,7 @@ uv run main.py --usd scene.usd --res 2560x1440 --fps 30
 Then open the browser client and connect to `127.0.0.1:49100`:
 
 - with `--serve-client`: <http://127.0.0.1:8080/index.html>
-- otherwise: `../../ovstream/examples/webrtc_client/index.html` straight off
+- otherwise: `<ovstream checkout>/examples/webrtc_client/index.html` straight off
   disk
 
 **Controls:** left-drag orbits, wheel zooms, any key resumes the auto-orbit.

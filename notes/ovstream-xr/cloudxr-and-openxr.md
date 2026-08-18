@@ -182,7 +182,7 @@ docker run -d --name cloudxr --gpus all --network host \
     nvcr.io/nvidia/cloudxr-runtime:5.0.2
 
 # then, against the container-provided 5.0.2 shim rather than IsaacSim's 5.0.1:
-cd openxr-stub
+cd examples/c/openxr-stub
 XDG_RUNTIME_DIR=$HOME/openxr/run \
 XR_RUNTIME_JSON=$HOME/openxr/share/openxr/1/openxr_cloudxr.json \
     ./build/openxr_stub
@@ -192,10 +192,10 @@ XR_RUNTIME_JSON=$HOME/openxr/share/openxr/1/openxr_cloudxr.json \
 `~/.config/openxr/1/active_runtime.json` at all — prefer it, and delete the
 5.0.1 registration to avoid two runtimes fighting.
 
-## `openxr-stub/` — what builds and runs today
+## `examples/c/openxr-stub/` — what builds and runs today
 
 ```bash
-cd openxr-stub
+cd examples/c/openxr-stub
 cmake -B build -DCMAKE_BUILD_TYPE=Release   # fetches OpenXR-SDK 1.1.43
 cmake --build build -j8
 ./build/openxr_stub
@@ -240,7 +240,7 @@ needs a feature request.
 
 ## The frame budget — measured, not guessed
 
-Benchmarked on the RTX 5070 Ti with `demo/ovrtx-stream --benchmark` (see its
+Benchmarked on the RTX 5070 Ti with `examples/python/ovrtx-stream --benchmark` (see its
 README for the full table). Pipelined cost fits:
 
 ```
